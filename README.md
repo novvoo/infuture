@@ -4,39 +4,79 @@
 
 infuture 是一体化 agent：既能处理常规任务（会话 / 模型 / 技能 / IM 通道 / 长运行 loop），又具备完整编程能力（LSP / DAP / 代码执行 / AST 结构化编辑 / 子 agent / 双模型审查 / Git）。在统一运行时上原生融合通用任务与编程能力，非外挂式集成。
 
-## 架构一览
+## 安装
 
+```bash
+npm install
 ```
-apps/
-  cli(入口) ──> packages/rpc ──> packages/core ──> packages/llm · packages/coding
-  tui ────────────┘                │
-  desktop ─────────────────────────┘──> packages/channels (Feishu/DingTalk) · packages/loop (长运行)
-```
-
-完整架构图见 [`docs/graph.md`](docs/graph.md)，迁移与集成说明见 [`docs/migration.md`](docs/migration.md)、[`docs/integration.md`](docs/integration.md)。
 
 ## 快速开始
 
 ```bash
-npm install          # 安装依赖
+# 配置 API key（provider 可选 openai / anthropic 等）
+npm run dev -- auth login openai sk-xxx
 
-# 一次问答（需先配置 API key）
-npx tsx packages/cli/src/index.ts auth login openai sk-xxx
-npx tsx packages/cli/src/index.ts chat "你好，介绍一下你自己"
+# 一次问答
+npm run chat -- "你好，介绍一下你自己"
 
 # 终端交互 UI
-npx tsx packages/cli/src/index.ts tui
+npm run tui
+
+# 桌面 Workbench（一键拉起后端 + 前端）
+npm run desktop
+# → 后端 ws://127.0.0.1:50051 · 前端 http://127.0.0.1:5173
 
 # 诊断环境（校验编程引擎 / 工具注册 / 沙箱）
-npx tsx packages/cli/src/index.ts doctor
-
-# agent 服务（stdio JSON-RPC）
-echo '{"jsonrpc":"2.0","id":1,"method":"doctor","params":{}}' | npx tsx packages/cli/src/index.ts agent
-
-# 桌面 workbench（两个终端）
-npm run server --workspace @infuture/desktop   # 终端1：后端 ws://127.0.0.1:50051
-npm run dev --workspace @infuture/desktop      # 终端2：前端 http://127.0.0.1:5173
+npm run doctor
 ```
+
+> 全局安装后也可直接使用 bin 命令 `infuture …`（见 `packages/cli/package.json`）。
+
+## 命令一览
+
+| 命令 | 说明 |
+|---|---|
+| `npm run chat -- "<prompt>"` | 一次问答 |
+| `npm run tui` | 终端交互 UI |
+| `npm run agent` | 启动 agent（stdio JSON-RPC 服务） |
+| `npm run desktop` | 桌面 Workbench（一键拉起前后端） |
+| `npm run dev -- channel` | 启动 Feishu/DingTalk 桥接（见下） |
+| `npm run dev -- auth login <provider> <key>` | 写入 API key |
+| `npm run dev -- models` | 列出模型 |
+| `npm run dev -- skills list` | 列出技能 |
+| `npm run dev -- doctor` | 诊断环境 |
+| `npm run dev -- loop …` | 长运行控制平面（见下） |
+| `npm run dev -- help` | 查看 CLI 帮助 |
+
+**IM 通道（channel）**：通过环境变量配置后启动桥接 —— `FEISHU_APP_ID` / `FEISHU_APP_SECRET`（飞书，`FEISHU_WS=1` 走长连接）、`DINGTALK_APP_KEY` / `DINGTALK_APP_SECRET`（钉钉）。
+
+## loop 控制平面
+
+长运行的多 worker 并行探索，事件源持久化在 `~/.future/agent/loop/events.jsonl`。
+
+| 命令 | 说明 |
+|---|---|
+| `loop start "<目标>" [--workers N] [--isolate] [--approve\|--strict]` | 启动 N 个并行探索 worker |
+| `loop list` / `loop stop <workerId>` / `loop steer <workerId\|--all goalId> "<指令>"` | worker 管理 |
+| `loop status [--goal G]` | 目标状态总览 |
+| `loop runs [--goal G]` | 运行历史 |
+| `loop frontier [--goal G]` | 可推进前沿 |
+| `loop task-graph <goalId>` | 任务依赖图 |
+| `loop replan <goalId>` | 依赖一致性重规划 |
+| `loop lease <claim\|renew\|release\|status> <goalId>` | 目标租约管理 |
+| `loop backup [--dir DIR]` | 备份事件源 |
+| `loop delete <goalId\|--all>` | 清理目标状态（含 worker 会话 / 隔离目录） |
+| `loop "<目标>" [--approve\|--strict]` | 单 goal 串行推进 |
+
+## 桌面 Workbench
+
+- 一键启动：`npm run desktop`（自动拉起后端 ws server 与前端 vite，任一进程退出即整体清理）
+- 或分两个终端：
+  ```bash
+  npm run desktop:server   # 后端 ws://127.0.0.1:50051
+  npm run desktop:dev      # 前端 http://127.0.0.1:5173
+  ```
+- 构建产物：`npm run desktop:build`
 
 ## 能力矩阵
 
@@ -45,7 +85,7 @@ npm run dev --workspace @infuture/desktop      # 终端2：前端 http://127.0.0
 | 会话/记忆/模型目录/技能 | infuture 原生 |
 | 审批门控工具 read/write/edit/shell | infuture（三态审批） |
 | IM 通道（Feishu/DingTalk 桥接） | infuture |
-| 长运行 loop 控制平面 | infuture（`/future-loop` 多 worker 并行探索） |
+| 长运行 loop 控制平面 | infuture（`loop` 多 worker 并行探索） |
 | 14 LSP 操作（`lsp_*`） | infuture（inloop 直调编程引擎） |
 | 28 DAP 操作（`dap_*`，lldb/dlv/debugpy） | infuture |
 | `execute_code`（Python/Bun worker） | infuture |
@@ -58,6 +98,6 @@ npm run dev --workspace @infuture/desktop      # 终端2：前端 http://127.0.0
 
 ```bash
 npm run typecheck                 # 全仓 tsc --noEmit
-npx tsx --test packages/core/tests/smoke.test.ts   # 核心状态机/消息/工具/loop 测试
-npm run build --workspace @infuture/desktop         # 前端构建
+npm test                          # 核心状态机/消息/工具/loop 测试
+npm run desktop:build             # 前端构建
 ```
