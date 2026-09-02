@@ -69,6 +69,21 @@ function extractPartialText(partial: unknown): string {
     .join('');
 }
 
+/**
+ * 规范化 hashline 语法文本内 `[PATH#TAG]` 的文件路径：
+ * 相对路径 → 基于 base 的绝对路径；`~/` → HOME 绝对路径。
+ * coding 服务按自身 cwd（进程 cwd）解析相对路径，模型写相对路径会 File not found，
+ * 故在转发前统一转成绝对路径。
+ */
+function normalizeHashlinePaths(input: string, base: string): string {
+  return input.replace(/\[([^\]#]+)#([0-9a-fA-F]{4})\]/g, (_m, p: string, tag: string) => {
+    let abs = p.trim();
+    if (abs.startsWith('~/')) abs = path.join(os.homedir(), abs.slice(2));
+    if (!path.isAbsolute(abs)) abs = path.resolve(base, abs);
+    return `[${abs}#${tag}]`;
+  });
+}
+
 export interface RunOutcome {
   sessionId: string;
   runId: string;
@@ -151,7 +166,10 @@ export class Engine {
         // edit 走 hashline 路由：input（hashline 语法）→ coding 服务 code_edit（默认 hashline）；replace 参数走本地兜底
         hashline: async (input) => {
           try {
-            const res = (await this.coding.call('code_edit', { input })) as {
+            // 规范化 input 内 [PATH#TAG] 的路径：相对/~/ → 基于 workspace 的绝对路径，
+            // 避免模型写相对路径时 coding 服务按自身 cwd（进程 cwd）解析失败（File not found）
+            const normalized = normalizeHashlinePaths(input, cwd);
+            const res = (await this.coding.call('code_edit', { input: normalized })) as {
               content?: Array<{ type?: string; text?: string }>;
               isError?: boolean;
             };
