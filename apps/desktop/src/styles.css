@@ -339,7 +339,7 @@ body {
 /* 模型菜单 */
 .model-menu { position: relative; }
 .model-list {
-  position: absolute; right: 0; top: 34px; width: 420px; max-height: 320px; overflow: auto;
+  position: absolute; right: 0; bottom: calc(100% + 6px); width: 420px; max-height: 320px; overflow: auto;
   background: var(--bg-float); border: 1px solid var(--border); border-radius: 10px;
   box-shadow: var(--shadow-pop); z-index: 40;
 }

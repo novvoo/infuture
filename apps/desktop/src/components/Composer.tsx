@@ -14,6 +14,7 @@ import { ThinkingMenu } from './ThinkingMenu';
 type SlashCommand =
   | { key: string; label: string; hint: string; kind: 'tool'; tool: string; usage: string; parse: (rest: string) => Record<string, unknown> | null }
   | { key: string; label: string; hint: string; kind: 'worker' }
+  | { key: string; label: string; hint: string; kind: 'research' }
   | { key: string; label: string; hint: string; kind: 'goto' };
 
 const CURATED_COMMANDS: SlashCommand[] = [
@@ -112,6 +113,12 @@ const CURATED_COMMANDS: SlashCommand[] = [
     label: '并行 worker 探索',
     hint: 'worker [数量] 目标 或 任务1 | 任务2 …（{w1} 引用前序输出）',
     kind: 'worker',
+  },
+  {
+    key: '/research',
+    label: '深度研究',
+    hint: 'research <主题>：多 worker 并行调研 → 交叉验证 → 深度报告',
+    kind: 'research',
   },
   {
     key: '/goal',
@@ -429,6 +436,63 @@ export function Composer() {
     return true;
   };
 
+  /** 深度研究：/research <主题> → 自动编排 4 个研究 worker（框架 → 并行调查 ×2 → 综合报告）。
+   *  依赖链 {w1}→{w2,w3}→{w4}：框架先出，调查并行（各负责一半子问题），报告交叉验证后产出最终报告。 */
+  const runResearchCommand = (value: string): boolean => {
+    const m = value.match(/^\/research\s*([\s\S]*)$/);
+    if (!m) return false;
+    const topic = (m[1] ?? '').trim();
+    if (!topic) {
+      setView('workers');
+      return true;
+    }
+    const goalId = `research:${topic.slice(0, 60)}`;
+    void spawnWorkers(
+      goalId,
+      [
+        {
+          title: '研究框架',
+          prompt:
+            `你是深度研究「${topic}」的框架规划员。先用 web_search/web_fetch 快速了解主题背景，` +
+            `然后输出结构化框架：\n1) 研究问题与目标\n2) 拆解出的 3-5 个子问题/调查角度（编号）\n` +
+            `3) 每个角度的检索关键词建议\n4) 研究边界与范围。\n` +
+            `简洁输出框架供后续调查 worker 使用，不要写完整报告。`,
+        },
+        {
+          title: '调查·证据 A',
+          prompt:
+            `研究框架：\n{w1}\n\n` +
+            `你是深度研究「${topic}」的调查员 A。基于上述框架，负责前半部分子问题/调查角度。\n` +
+            `用 web_search / web_fetch 深入检索，尽量多来源交叉印证；每个关键结论标注来源 URL。` +
+            `如主题涉及本地代码/文档，用 grep / glob 检索工作区。\n` +
+            `输出：每个子问题的发现 + 证据 + 来源清单。先动手检索，不要只凭已有知识空想。`,
+        },
+        {
+          title: '调查·证据 B',
+          prompt:
+            `研究框架：\n{w1}\n\n` +
+            `你是深度研究「${topic}」的调查员 B。基于上述框架，负责后半部分子问题/调查角度（避免与调查员 A 重复）。\n` +
+            `用 web_search / web_fetch 深入检索，尽量多来源交叉印证；每个关键结论标注来源 URL。` +
+            `如主题涉及本地代码/文档，用 grep / glob 检索工作区。\n` +
+            `输出：每个子问题的发现 + 证据 + 来源清单。先动手检索，不要只凭已有知识空想。`,
+        },
+        {
+          title: '综合报告',
+          prompt:
+            `调查结果 A：\n{w2}\n\n调查结果 B：\n{w3}\n\n` +
+            `你是深度研究「${topic}」的报告撰写员。基于两份调查，交叉核对矛盾、去重、补漏` +
+            `（证据不足的子问题可再用 web_search 补检索）。\n` +
+            `产出最终深度研究报告，结构：\n1) 摘要\n2) 背景\n3) 关键发现（按子问题组织）\n` +
+            `4) 对比/分析\n5) 结论与建议\n6) 参考来源。\n` +
+            `所有关键结论必须标注来源；中文输出；篇幅完整可直接使用。`,
+        },
+      ],
+      false,
+    );
+    setView('workers');
+    return true;
+  };
+
   /** 工具指令：解析参数 → 真实直调绑定工具（结果由后端写入会话历史）。 */
   const runToolCommand = async (value: string): Promise<void> => {
     const [cmd, ...restParts] = value.split(/\s+/);
@@ -473,6 +537,9 @@ export function Composer() {
         return;
       case '/worker':
         runWorkerCommand(seg);
+        return;
+      case '/research':
+        runResearchCommand(seg);
         return;
       default:
         if (allCommands.some((c) => c.key === cmd && c.kind === 'tool')) {

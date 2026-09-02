@@ -115,6 +115,25 @@ npm run dev -- loop delete --all
   npm run desktop:dev      # 前端 http://127.0.0.1:5173
   ```
 
+**输入区能力**：
+- **模型切换** + **思考程度选择**（无需思考 / 中等思考 / 高级思考 → 按模型映射 reasoning_effort：GLM 系为 low / high / max，无需思考实测可把思考压到接近 0；"先动手后细化"由 ACTION-FIRST 系统提示引导）
+- 斜杠命令在文本任意位置触发：`/search` `/files` `/glob` `/image` `/browser` `/git` `/code` `/review` `/worker` `/research` `/goal` `/clear`
+
+## 深度研究（/research）
+
+桌面输入 `/research <主题>` 自动编排一组研究 worker（带依赖链，`{w1}` 前序输出自动注入）：
+
+```
+框架 worker ──→ 调查·证据 A（并行）──┐
+            └→ 调查·证据 B（并行）──┼──→ 综合报告 worker
+```
+
+- **框架 worker**：拆解研究问题为子问题 + 检索策略
+- **调查 worker ×2**：各负责一半子问题，用 `web_search` / `web_fetch` 收集带来源证据
+- **综合报告 worker**：交叉验证、去重、补漏，产出结构化深度报告（摘要 / 背景 / 关键发现 / 对比 / 结论 / 参考来源）
+
+普通并行探索用 `/worker [数量] 目标`；CLI 侧可用 `loop` 控制平面。
+
 ## 发布产物
 
 **1. 构建前端产物**（输出到 `apps/desktop/dist/`）：
@@ -152,6 +171,8 @@ npm run docker:run          # 等价 docker run --rm -p 50051:50051 infuture
 | 审批门控工具 read/write/edit/shell | infuture（三态审批） |
 | IM 通道（Feishu/DingTalk 桥接） | infuture |
 | 长运行 loop 控制平面 | infuture（`loop` 多 worker 并行探索） |
+| 深度研究（`/research` 多 worker 编排） | infuture（框架 → 并行调查 → 综合报告） |
+| 思考控制（思考程度选择 / reasoning_effort） | infuture（无需 / 中等 / 高级，GLM 系 low/high/max） |
 | 14 LSP 操作（`lsp_*`） | infuture（inloop 直调编程引擎） |
 | 28 DAP 操作（`dap_*`，lldb/dlv/debugpy） | infuture |
 | `execute_code`（Python/Bun worker） | infuture |
