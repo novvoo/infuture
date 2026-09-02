@@ -20,7 +20,9 @@
     "desktop:dev": "npm run dev --workspace @infuture/desktop",
     "desktop:build": "npm run build --workspace @infuture/desktop",
     "desktop:server": "npm run server --workspace @infuture/desktop",
-    "desktop": "node scripts/desktop-dev.mjs"
+    "desktop": "node scripts/desktop-dev.mjs",
+    "docker:build": "docker build -t infuture .",
+    "docker:run": "docker run --rm -p 50051:50051 infuture"
   },
   "dependencies": {
     "tsx": "^4.19.0"

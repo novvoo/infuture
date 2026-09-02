@@ -68,6 +68,31 @@ npm run doctor
 | `loop delete <goalId\|--all>` | 清理目标状态（含 worker 会话 / 隔离目录） |
 | `loop "<目标>" [--approve\|--strict]` | 单 goal 串行推进 |
 
+**配置与使用示例**：
+
+```bash
+# 1. 配置 API key（一次性）
+npm run dev -- auth login openai sk-xxx
+
+# 2. 并行探索：4 个 worker、worktree 隔离、自动批准工具
+npm run dev -- loop start "调研 RAG 检索方案选型" --workers 4 --isolate --approve
+
+# 3. 查看状态 / 运行历史 / 可推进前沿 / worker 列表
+npm run dev -- loop status
+npm run dev -- loop runs
+npm run dev -- loop frontier
+npm run dev -- loop list
+
+# 4. 给 worker 追加指引 / 停止
+npm run dev -- loop steer <workerId> "重点对比向量数据库的运维成本"
+npm run dev -- loop stop <workerId>
+
+# 5. 清理目标全部状态（含 worker 会话 / 隔离目录）
+npm run dev -- loop delete --all
+```
+
+**审批模式**：默认 `timeout`（工具审批超时自动拒绝）；`--approve` 自动批准；`--strict` 一律拒绝（只读推进）。事件源持久化在 `~/.future/agent/loop/events.jsonl`，可用 `loop backup` 备份；后端端口由 `INFUTURE_PORT` 控制（默认 `50051`）。
+
 ## 桌面 Workbench
 
 - 一键启动：`npm run desktop`（自动拉起后端 ws server 与前端 vite，任一进程退出即整体清理）
@@ -77,6 +102,30 @@ npm run doctor
   npm run desktop:dev      # 前端 http://127.0.0.1:5173
   ```
 - 构建产物：`npm run desktop:build`
+
+## 构建与发布产物
+
+```bash
+npm run desktop:build       # 构建前端 → apps/desktop/dist/
+npm run desktop:server      # 后端 JSON-RPC（检测到 dist 后在同一端口托管页面）
+```
+
+构建后直接 `npm run desktop:server`，打开 `http://127.0.0.1:50051` 即可访问完整 Web 应用（同一端口同时提供页面与 ws，无需额外静态服务器）。
+
+**Docker 部署**（镜像内置国内 npm 镜像源，多层构建）：
+
+```bash
+npm run docker:build        # 等价 docker build -t infuture .
+npm run docker:run          # 等价 docker run --rm -p 50051:50051 infuture
+```
+
+- 打开 `http://localhost:50051` 使用
+- 远程/公网部署时覆盖前端连接的 ws 地址：
+  ```bash
+  docker build --build-arg VITE_WS_URL=wss://<你的域名>:50051 -t infuture .
+  ```
+- 依赖镜像源默认 `registry.npmmirror.com`，可 `--build-arg NPM_REGISTRY=<镜像>` 覆盖
+- 说明：容器内默认不启用编程工具（bun coding 服务懒启动），如需 LSP/DAP/代码执行请在镜像内安装 bun
 
 ## 能力矩阵
 

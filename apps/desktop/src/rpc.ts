@@ -4,6 +4,9 @@ export interface RpcNotification {
   params?: unknown;
 }
 
+/** 后端 ws 地址：可用构建期环境变量 VITE_WS_URL 覆盖（容器/远程部署用），默认本机开发地址。 */
+const DEFAULT_WS_URL: string = (import.meta.env.VITE_WS_URL as string | undefined) ?? 'ws://127.0.0.1:50051';
+
 export class DesktopRpc {
   private ws: WebSocket | null = null;
   private nextId = 1;
@@ -11,7 +14,7 @@ export class DesktopRpc {
   private handlers = new Set<(n: RpcNotification) => void>();
   connected = false;
 
-  constructor(private readonly url = 'ws://127.0.0.1:50051') {}
+  constructor(private readonly url: string = DEFAULT_WS_URL) {}
 
   connect(): Promise<void> {
     return new Promise((resolve, reject) => {

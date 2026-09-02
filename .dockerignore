@@ -1,0 +1,35 @@
+# 依赖与构建产物（镜像内重建，不进上下文）
+node_modules
+dist
+*.tsbuildinfo
+coverage
+.vite
+.cache
+
+# 版本控制
+.git
+.gitignore
+.gitattributes
+
+# 本地配置与密钥
+.env
+.env.*
+*.local
+.agent-data
+.agent-logs
+.agent-memory
+.DS_Store
+
+# 运行时状态 / 临时目录
+.loop
+.scratch
+.future
+
+# 日志与临时脚本
+*.log
+tmp-*
+*.tmp
+
+# IDE
+.vscode
+.idea
