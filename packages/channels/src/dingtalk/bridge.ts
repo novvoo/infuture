@@ -58,6 +58,11 @@ export class DingTalkBridge {
     if (json.errcode !== 0) throw new Error(`dingtalk send failed: ${json.errcode} ${json.errmsg}`);
   }
 
+  /** 验证凭证联通性（用于桌面端"启动"时的健康检查）。 */
+  async ping(): Promise<void> {
+    await this.ensureToken();
+  }
+
   async handleIncoming(conversationId: string, staffId: string, text: string): Promise<void> {
     if (!text.trim()) return;
     // IM 文本命令：/approve <id> /reject <id> 响应审批

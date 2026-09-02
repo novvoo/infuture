@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useAppState, useAppApi } from '../state';
 import type { DirEntry } from '../types';
 import { WorkspaceDirPicker } from './WorkspaceDirPicker';
+import { CodeFileEditor } from './CodeFileEditor';
 
 function formatSize(n?: number): string {
   if (n === undefined) return '';
@@ -134,13 +135,7 @@ export function FilesPanel() {
             </button>
           </div>
           {fileView.isText ? (
-            <textarea
-              className="file-editor"
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              spellCheck={false}
-              placeholder="文件内容…"
-            />
+            <CodeFileEditor value={draft} path={fileView.path} onChange={setDraft} />
           ) : (
             <pre className="file-readonly">{fileView.content}</pre>
           )}

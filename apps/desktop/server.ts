@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { WebSocketServer, WebSocket } from 'ws';
 import { Engine } from '@infuture/core';
 import { ServerSession } from '@infuture/rpc';
+import { ChannelManager } from '@infuture/channels';
 
 const PORT = Number(process.env.INFUTURE_PORT ?? 50051);
 
@@ -82,9 +83,14 @@ async function main() {
   });
   await engine.init();
 
+  // IM 桥接管理器：web 里通过 channel.* RPC 配置飞书/钉钉凭证并启停桥接。
+  // 启动时若已有配置，桥接不自动拉起，由用户在 IM 菜单手动启动。
+  const channelManager = new ChannelManager(engine);
+  await channelManager.load();
+
   // 不注入 resolver：审批走 DefaultApprovalGate 的挂起通道，
   // 由前端通过 approval.resolve RPC 决议（带超时自动拒绝兜底）。
-  server = new ServerSession(engine);
+  server = new ServerSession(engine, { channelManager });
   server.setNotificationHandler((n) => broadcast(n));
 
   // 同一 HTTP 服务器上挂 WebSocket：GET 走静态托管，upgrade 走 ws JSON-RPC

@@ -2,16 +2,22 @@ import React, { useState } from 'react';
 import { useAppState, useAppApi } from '../state';
 import { LLMSetupModal } from './LLMSetupModal';
 import { SearchConfigModal } from './SearchConfigModal';
+import { ImChannelModal } from './ImChannelModal';
 
 /** 设置菜单（侧栏底部触发）— 一致性配置：沙箱 / 审批 / 轮数 / LLM。工作区目录在文件面板切换。 */
 export function SettingsMenu() {
-  const { settings, busy } = useAppState();
+  const { settings, busy, channelStatus } = useAppState();
   const { updateSettings } = useAppApi();
   const [open, setOpen] = useState(false);
   const [llmOpen, setLlmOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [imOpen, setImOpen] = useState(false);
 
   const s = settings ?? {};
+
+  // IM 任一通道运行中 → 设置按钮显示状态点
+  const imActive = !!channelStatus && (channelStatus.feishu?.state === 'running' || channelStatus.dingtalk?.state === 'running');
+  const imRunning = !!channelStatus && (channelStatus.feishu?.state === 'running' || channelStatus.dingtalk?.state === 'running');
 
   const setTier = (sandboxTier: string) => void updateSettings({ sandboxTier: sandboxTier as never });
   const setCoding = (codingToolsApproval: 'on' | 'auto' | 'off') => void updateSettings({ codingToolsApproval });
@@ -91,15 +97,34 @@ export function SettingsMenu() {
             </div>
             <button className="btn sm" onClick={() => setSearchOpen(true)}>配置…</button>
           </div>
+
+          <div className="setting-row">
+            <div>
+              <div className="l">
+                IM 通道 {imRunning && <span className="badge ok" style={{ fontSize: 9 }}>运行中</span>}
+              </div>
+              <div className="d">飞书 / 钉钉桥接：IM 里对话与审批</div>
+            </div>
+            <button className="btn sm" onClick={() => setImOpen(true)}>配置…</button>
+          </div>
         </div>
       )}
 
-      <button className="rail-btn" style={{ width: 40, height: 40 }} title="设置" disabled={busy} onClick={() => setOpen((o) => !o)}>
+      <button className="rail-btn" style={{ width: 40, height: 40, position: 'relative' }} title="设置" disabled={busy} onClick={() => setOpen((o) => !o)}>
         ⚙
+        {imActive && (
+          <span
+            style={{
+              position: 'absolute', top: 6, right: 6, width: 7, height: 7, borderRadius: '50%',
+              background: 'var(--green, #6ee7b7)', boxShadow: '0 0 4px var(--green, #6ee7b7)',
+            }}
+          />
+        )}
       </button>
 
       {llmOpen && <LLMSetupModal onClose={() => setLlmOpen(false)} />}
       {searchOpen && <SearchConfigModal onClose={() => setSearchOpen(false)} />}
+      {imOpen && <ImChannelModal onClose={() => setImOpen(false)} />}
     </div>
   );
 }

@@ -46,6 +46,7 @@ export class FeishuWsClient {
     private readonly appId: string,
     private readonly appSecret: string,
     private readonly onMessage: MessageHandler,
+    private readonly onError?: (err: Error) => void,
   ) {}
 
   private async getEndpoint(): Promise<string> {
@@ -54,7 +55,11 @@ export class FeishuWsClient {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ app_id: this.appId, app_secret: this.appSecret }),
     });
+    if (!tokenResp.ok) throw new Error(`feishu 获取 token 失败：HTTP ${tokenResp.status}`);
     const tokenJson = (await tokenResp.json()) as FeishuTokenJson;
+    if (tokenJson.code !== 0 || !tokenJson.tenant_access_token) {
+      throw new Error(`feishu 获取 token 失败：${tokenJson.code} ${tokenJson.msg ?? ''}`);
+    }
     const endpointResp = await fetch('https://open.feishu.cn/open-apis/bot/v2/ws/endpoint', {
       headers: { authorization: `Bearer ${tokenJson.tenant_access_token}` },
     });
@@ -89,11 +94,14 @@ export class FeishuWsClient {
         // 自动重连
         setTimeout(() => void this.connect(), 3000);
       });
-      ws.on('error', () => {
+      ws.on('error', (err) => {
+        this.onError?.(err instanceof Error ? err : new Error(String(err)));
         ws.close();
       });
     } catch (err) {
-      console.error('[feishu] ws connect failed:', err);
+      const e = err instanceof Error ? err : new Error(String(err));
+      this.onError?.(e);
+      console.error('[feishu] ws connect failed:', e.message);
       setTimeout(() => void this.connect(), 5000);
     }
   }
@@ -107,5 +115,6 @@ export class FeishuWsClient {
 
 interface FeishuTokenJson {
   code: number;
+  msg?: string;
   tenant_access_token?: string;
 }

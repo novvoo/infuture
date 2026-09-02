@@ -53,7 +53,10 @@ npm run doctor
 | `npm run dev -- loop …` | 长运行控制平面（见下） |
 | `npm run dev -- help` | 查看 CLI 帮助 |
 
-**IM 通道（channel）**：通过环境变量配置后启动桥接 —— `FEISHU_APP_ID` / `FEISHU_APP_SECRET`（飞书，`FEISHU_WS=1` 走长连接）、`DINGTALK_APP_KEY` / `DINGTALK_APP_SECRET`（钉钉）。
+**IM 通道（channel）**：把 infuture 接到 IM 机器人（IM 里发消息即进入同一套 Engine 会话，支持 `/approve` `/reject` 审批指令）。
+
+- **桌面 web 端（推荐）**：侧栏 ⚙ 设置 → 「IM 通道」菜单，填写飞书 / 钉钉凭证并启停桥接。凭证持久化到 `~/.future/agent/channels.json`，不随 RPC 回传明文。
+- **CLI**：通过环境变量配置后启动桥接 —— `FEISHU_APP_ID` / `FEISHU_APP_SECRET`（飞书，`FEISHU_WS=1` 走长连接）、`DINGTALK_APP_KEY` / `DINGTALK_APP_SECRET`（钉钉）。
 
 ## 配置 loop 命令
 

@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useRef, useState, useCallback } from 'react';
 import { DesktopRpc } from './rpc';
-import type { ApprovalPending, DirEntry, FileView, LoopEventView, LoopTodo, LoopWorker, ModelInfo, RailView, RunEvent, RunLogItem, SessionInfo, WorkerLogEntry } from './types';
+import type { ApprovalPending, ChannelConfigView, ChannelStatus, DirEntry, FileView, LoopEventView, LoopTodo, LoopWorker, ModelInfo, RailView, RunEvent, RunLogItem, SessionInfo, WorkerLogEntry } from './types';
 
 export interface SettingsInfo {
   defaultModel?: string;
@@ -89,6 +89,11 @@ interface AppApi {
   loadLoopRuns: () => Promise<void>;
   loadLoopFrontier: () => Promise<void>;
   refreshLoop: () => Promise<void>;
+  // IM 通道
+  loadChannel: () => Promise<{ config: ChannelConfigView; status: ChannelStatus }>;
+  saveChannel: (patch: Partial<ChannelConfigView>) => Promise<ChannelStatus>;
+  startChannel: (channel: 'feishu' | 'dingtalk') => Promise<ChannelStatus>;
+  stopChannel: (channel: 'feishu' | 'dingtalk') => Promise<ChannelStatus>;
 }
 
 interface AppState {
@@ -108,6 +113,7 @@ interface AppState {
   doctor: { programming: boolean; programmingPath: string | null; tools: number; codingTools: number; sessions: number } | null;
   settings: SettingsInfo | null;
   auth: AuthInfo | null;
+  channelStatus: ChannelStatus | null;
   // 文件浏览器状态
   files: DirEntry[];
   fsPath: string;
@@ -200,6 +206,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [doctor, setDoctor] = useState<AppState['doctor']>(null);
   const [settings, setSettings] = useState<SettingsInfo | null>(null);
   const [auth, setAuth] = useState<AuthInfo | null>(null);
+  const [channelStatus, setChannelStatus] = useState<ChannelStatus | null>(null);
   const [files, setFiles] = useState<DirEntry[]>([]);
   const [fsPath, setFsPath] = useState('');
   const [fsRoot, setFsRoot] = useState('');
@@ -258,6 +265,42 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const refreshLoop = useCallback(async () => {
     await Promise.all([loadLoopStatus(), loadLoopRuns(), loadLoopFrontier()]);
   }, [loadLoopStatus, loadLoopRuns, loadLoopFrontier]);
+
+  // IM 通道：读取配置+状态、保存配置、启动/停止桥接
+  const loadChannel = useCallback(async () => {
+    const rpc = rpcRef.current;
+    if (!rpc) return { config: {} as ChannelConfigView, status: null as unknown as ChannelStatus };
+    const [config, status] = await Promise.all([
+      rpc.call<ChannelConfigView>('channel.config.get'),
+      rpc.call<ChannelStatus>('channel.status'),
+    ]);
+    setChannelStatus(status ?? null);
+    return { config: config ?? {}, status: status ?? null as unknown as ChannelStatus };
+  }, []);
+
+  const saveChannel = useCallback(async (patch: Partial<ChannelConfigView>) => {
+    const rpc = rpcRef.current;
+    if (!rpc) return null as unknown as ChannelStatus;
+    const status = await rpc.call<ChannelStatus>('channel.config.set', patch);
+    setChannelStatus(status ?? null);
+    return status ?? null as unknown as ChannelStatus;
+  }, []);
+
+  const startChannel = useCallback(async (channel: 'feishu' | 'dingtalk') => {
+    const rpc = rpcRef.current;
+    if (!rpc) return null as unknown as ChannelStatus;
+    const status = await rpc.call<ChannelStatus>('channel.start', { channel });
+    setChannelStatus(status ?? null);
+    return status ?? null as unknown as ChannelStatus;
+  }, []);
+
+  const stopChannel = useCallback(async (channel: 'feishu' | 'dingtalk') => {
+    const rpc = rpcRef.current;
+    if (!rpc) return null as unknown as ChannelStatus;
+    const status = await rpc.call<ChannelStatus>('channel.stop', { channel });
+    setChannelStatus(status ?? null);
+    return status ?? null as unknown as ChannelStatus;
+  }, []);
 
   useEffect(() => {
     const rpc = new DesktopRpc();
@@ -869,7 +912,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  const state: AppState = { connected, sessions, currentSessionId, messages, models, currentModel, tools, runLog, pendingApproval, busy, runId, doctor, settings, auth, files, fsPath, fsRoot, fileView, workers, workerLogs, goalTodos, goalEvents, loopStatus, loopRuns, loopFrontier, view };
+  const state: AppState = { connected, sessions, currentSessionId, messages, models, currentModel, tools, runLog, pendingApproval, busy, runId, doctor, settings, auth, channelStatus, files, fsPath, fsRoot, fileView, workers, workerLogs, goalTodos, goalEvents, loopStatus, loopRuns, loopFrontier, view };
   const api: AppApi = {
     sendMessage,
     stop,
@@ -916,6 +959,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     loadLoopRuns,
     loadLoopFrontier,
     refreshLoop,
+    loadChannel,
+    saveChannel,
+    startChannel,
+    stopChannel,
   };
 
   return (

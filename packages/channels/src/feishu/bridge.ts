@@ -12,6 +12,8 @@ export interface FeishuBridgeOptions {
   appSecret: string;
   engine: Engine;
   useWebSocket?: boolean;
+  /** 长连接/请求错误回调（桌面端据此标记通道状态）。 */
+  onError?: (err: Error) => void;
   /** 测试注入用；默认按 appId/appSecret 创建真实客户端。 */
   rest?: FeishuRestClient;
 }
@@ -25,7 +27,7 @@ export class FeishuBridge {
     this.rest = options.rest ?? new FeishuRestClient(options.appId, options.appSecret);
     this.engine = options.engine;
     if (options.useWebSocket) {
-      this.ws = new FeishuWsClient(options.appId, options.appSecret, (ev) => this.onMessage(ev));
+      this.ws = new FeishuWsClient(options.appId, options.appSecret, (ev) => this.onMessage(ev), options.onError);
     }
   }
 

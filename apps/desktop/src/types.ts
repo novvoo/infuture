@@ -161,3 +161,21 @@ export interface LoopEventView {
   ts: number;
   text: string;
 }
+
+/** IM 通道状态条目（channel.status）。 */
+export interface ChannelStatusEntry {
+  state: 'stopped' | 'starting' | 'running' | 'error';
+  hasConfig: boolean;
+  detail?: string;
+}
+
+export interface ChannelStatus {
+  feishu: ChannelStatusEntry;
+  dingtalk: ChannelStatusEntry;
+}
+
+/** IM 通道配置视图（secret 掩码，channel.config.get）。 */
+export interface ChannelConfigView {
+  feishu?: { appId: string; appSecret: string; useWebSocket?: boolean };
+  dingtalk?: { appKey: string; appSecret: string; useWebSocket?: boolean };
+}

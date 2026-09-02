@@ -7,6 +7,7 @@ import { discoverSkills } from '@infuture/core';
 import type { ApprovalRequest } from '@infuture/core';
 import type { RunEventCallback } from '@infuture/core';
 import { LoopControl, LoopStore, WorkerRuntime } from '@infuture/loop';
+import type { ChannelManager } from '@infuture/channels';
 import { newUserMessage } from '@infuture/types';
 import { METHODS, type RpcNotification, type RpcRequest, type RpcResponse } from './protocol.js';
 import path from 'node:path';
@@ -15,14 +16,18 @@ import fs from 'node:fs/promises';
 export interface ServerSessionOptions {
   /** 审批决策注入器（桌面 UI 等）。 */
   approvalResolver?: (approval: ApprovalRequest) => Promise<{ approved: boolean; reason?: string }>;
+  /** IM 桥接管理器（桌面端注入，用于 channel.* RPC）。 */
+  channelManager?: ChannelManager;
 }
 
 export class ServerSession {
   readonly engine: Engine;
   private onNotification?: (n: RpcNotification) => void;
+  private readonly channelManager?: ChannelManager;
 
   constructor(engine: Engine, options: ServerSessionOptions = {}) {
     this.engine = engine;
+    this.channelManager = options.channelManager;
     if (options.approvalResolver) {
       engine.approval.setResolver(options.approvalResolver);
     }
@@ -208,6 +213,54 @@ export class ServerSession {
       }
       case METHODS.SearchVerify: {
         return await this.engine.verifySearch();
+      }
+      case METHODS.ChannelConfigGet: {
+        if (!this.channelManager) throw new Error('channel manager 未启用');
+        return this.channelManager.configView();
+      }
+      case METHODS.ChannelConfigSet: {
+        if (!this.channelManager) throw new Error('channel manager 未启用');
+        const patch = (p ?? {}) as Record<string, unknown>;
+        const cfg: Record<string, unknown> = {};
+        if (patch.feishu && typeof patch.feishu === 'object') {
+          const f = patch.feishu as Record<string, unknown>;
+          cfg.feishu = {
+            appId: String(f.appId ?? ''),
+            appSecret: typeof f.appSecret === 'string' && f.appSecret && f.appSecret !== '••••••' ? f.appSecret : undefined,
+            useWebSocket: f.useWebSocket === true,
+            verifyToken: typeof f.verifyToken === 'string' && f.verifyToken && f.verifyToken !== '••••••' ? f.verifyToken : undefined,
+          };
+        }
+        if (patch.dingtalk && typeof patch.dingtalk === 'object') {
+          const d = patch.dingtalk as Record<string, unknown>;
+          cfg.dingtalk = {
+            appKey: String(d.appKey ?? ''),
+            appSecret: typeof d.appSecret === 'string' && d.appSecret && d.appSecret !== '••••••' ? d.appSecret : undefined,
+            useWebSocket: d.useWebSocket === true,
+          };
+        }
+        await this.channelManager.setConfig(cfg as never);
+        return this.channelManager.getStatus();
+      }
+      case METHODS.ChannelStatus: {
+        if (!this.channelManager) throw new Error('channel manager 未启用');
+        return this.channelManager.getStatus();
+      }
+      case METHODS.ChannelStart: {
+        if (!this.channelManager) throw new Error('channel manager 未启用');
+        const name = String((p as { channel?: string })?.channel ?? '');
+        if (name === 'feishu') await this.channelManager.startFeishu();
+        else if (name === 'dingtalk') await this.channelManager.startDingtalk();
+        else throw new Error(`未知通道：${name}`);
+        return this.channelManager.getStatus();
+      }
+      case METHODS.ChannelStop: {
+        if (!this.channelManager) throw new Error('channel manager 未启用');
+        const name = String((p as { channel?: string })?.channel ?? '');
+        if (name === 'feishu') this.channelManager.stopFeishu();
+        else if (name === 'dingtalk') this.channelManager.stopDingtalk();
+        else throw new Error(`未知通道：${name}`);
+        return this.channelManager.getStatus();
       }
       case METHODS.ModelCustom: {
         const m = (p ?? {}) as {
