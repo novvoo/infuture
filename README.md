@@ -38,6 +38,19 @@ npm run server --workspace @infuture/desktop   # 终端1：后端 ws://127.0.0.1
 npm run dev --workspace @infuture/desktop      # 终端2：前端 http://127.0.0.1:5173
 ```
 
+## 桌面 Workbench
+
+左侧 ActivityRail 提供四个活动视图：
+
+| 视图 | 说明 |
+|---|---|
+| 💬 会话 | 对话 + 工具调用日志 + `/` 斜杠指令（任意位置触发） |
+| 🗂 文件 | 工作区文件浏览与编辑 |
+| 🎯 目标 | 目标管理：**状态总览 + 详情一页联动** |
+| ⚙ 设置 | 模型 / 审批 / 搜索 / 工作区等配置 |
+
+**目标视图** 将原「目标状态」「目标」两个菜单合并为单页：顶部为全部目标的**状态总览条**（状态 / 进度 / 执行次数，点击即展开并滚动到对应目标），下方为**目标详情卡片**（手风琴式展开：具体事项 / workers 实时日志 / 运行历史 / 事件日志 / 清理操作），并内置「启动 N 个并行 worker」工具栏与全局汇总统计（goal · 运行中 worker · 完成 · 受阻事项）。
+
 ## 能力矩阵
 
 | 能力 | 说明 |
@@ -52,7 +65,7 @@ npm run dev --workspace @infuture/desktop      # 终端2：前端 http://127.0.0
 | `ast_edit` / `ast_grep`（hashline + ast-grep） | infuture |
 | `subagent` / `review` / `git_pr` | infuture |
 | 浏览器 / 网络搜索 / 图片理解 | infuture（web_search 多 provider + web_fetch） |
-| Workbench 桌面 UI | infuture（浮动窗口 / 一致性配置设计） |
+| Workbench 桌面 UI | infuture（浮动窗口 / 一致性配置设计 / 目标管理一页联动） |
 
 ## 验证
 
