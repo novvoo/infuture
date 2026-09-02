@@ -152,6 +152,16 @@ function isCodingTool(name: string): boolean {
   return /^(lsp_|dap_|execute_code|bash|ast_|subagent|review|git_|code_edit|hash_edit|code_read)/.test(name);
 }
 
+/** 编辑工具调用模式标注：input → hashline；old_string/new_string → replace 兜底。用于日志可观测。 */
+function editModeLabel(name: string, args: unknown): string | undefined {
+  if (name !== 'edit' && name !== 'code_edit' && name !== 'hash_edit') return undefined;
+  if (!args || typeof args !== 'object') return undefined;
+  const o = args as Record<string, unknown>;
+  if (typeof o.input === 'string' && o.input.trim()) return 'hashline';
+  if (o.old_string !== undefined || o.new_string !== undefined) return 'replace';
+  return undefined;
+}
+
 /** 把 worker 运行事件转成日志条目（前端展示用）。 */
 function workerEventToLog(ev: RunEvent): WorkerLogEntry | null {
   const ts = Date.now();
@@ -161,7 +171,7 @@ function workerEventToLog(ev: RunEvent): WorkerLogEntry | null {
     case 'reasoning_delta':
       return { kind: 'reasoning', text: ev.text, ts };
     case 'tool_call':
-      return { kind: 'tool', name: ev.name, detail: JSON.stringify(ev.args ?? '').slice(0, 200), ts };
+      return { kind: 'tool', name: `${ev.name}${editModeLabel(ev.name, ev.args) ? '·' + editModeLabel(ev.name, ev.args) : ''}`, detail: JSON.stringify(ev.args ?? '').slice(0, 200), ts };
     case 'tool_result':
       return { kind: 'result', name: ev.name, detail: `${ev.costMs !== undefined ? `(${ev.costMs}ms) ` : ''}${(ev.result ?? '').slice(0, 300)}`, ts };
     case 'tool_update':
@@ -435,7 +445,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         case 'tool_call':
           setRunLog((prev) => [
             ...prev,
-            { kind: 'tool_call', label: ev.name, detail: JSON.stringify(ev.args).slice(0, 400), coding: isCodingTool(ev.name), ts: Date.now() },
+            {
+              kind: 'tool_call',
+              label: `${ev.name}${editModeLabel(ev.name, ev.args) ? '·' + editModeLabel(ev.name, ev.args) : ''}`,
+              detail: JSON.stringify(ev.args).slice(0, 400),
+              coding: isCodingTool(ev.name),
+              ts: Date.now(),
+            },
           ]);
           break;
         case 'tool_result':
