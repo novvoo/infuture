@@ -500,6 +500,54 @@ export function codingTools(client: CodingToolsClient | null, options: CodingToo
         return callTool(client, 'edit', { path: p, edits: [{ old_text, new_text }] });
       },
     },
+    {
+      // hashline 锚点编辑：行号 + 快照 tag 的语言（SWAP/DEL/INS/BLK/REM/MV）。
+      // 必须先经 code_read 读过目标文件（产出行号 + 4-hex 快照 tag），否则 Patcher 以
+      // stale-tag / unseen-line 拒绝。比 code_edit（replace）更省 token、避免 string-not-found 循环、
+      // 支持 tree-sitter 树级编辑与 REM/MV。
+      def: toolDef('hash_edit', 'hashline 锚点编辑（行号+快照tag：SWAP N.=M / DEL N / INS.PRE/POST N / SWAP.BLK N / REM / MV DEST；需先 code_read）', {
+        type: 'object',
+        properties: {
+          input: { type: 'string', description: 'hashline 语法文本：形如 [path#TAG]\\nSWAP 2.=2:\\n+ 新行…' },
+        },
+        required: ['input'],
+      }),
+      guidelines: [
+        'hash_edit 直调内置 edit 工具的 hashline 模式（锚点编辑，非文本替换）',
+        '前置：先用 code_read 读取目标文件（返回 LINE:TEXT 行号与 [PATH#TAG] 快照tag），锚点必须来自该输出',
+        'SWAP N.=M 替换原始行 N..M；DEL N 删除行；INS.PRE/INS.POST N 在行 N 前/后插入；SWAP.BLK/DEL.BLK N 用 tree-sitter 解析从 N 开始的整块；REM 删文件；MV DEST 移动/重命名',
+        'body 行一律 +TEXT（逐字插入，保留缩进）；行号引用原始文件，不随 hunk 位移',
+      ],
+      handler: (args) => {
+        const { input } = (args ?? {}) as { input?: string };
+        if (!input) {
+          return Promise.resolve({ result: 'hash_edit 需要 input（hashline 语法文本）', is_error: true });
+        }
+        return callTool(client, 'hash_edit', { input });
+      },
+    },
+    {
+      // 编程引擎原生 read：输出带行号（LINE:TEXT）与 4-hex 快照 tag（[PATH#TAG]），
+      // 供 hash_edit 锚点使用。与通用 read 并存：通用 read 用于日常阅读，code_read 用于编辑闭环。
+      def: toolDef('code_read', '读取文件并输出行号与快照tag（[PATH#TAG] + LINE:TEXT），供 hash_edit 锚点编辑使用', {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: '文件路径（本地路径或 URL）' },
+          offset: { type: 'number', description: '起始行号（1-based）' },
+          limit: { type: 'number', description: '读取行数' },
+        },
+        required: ['path'],
+      }),
+      guidelines: ['code_read 直调内置 read 工具；hash_edit 前必须先用本工具读取目标文件以获取最新快照tag'],
+      handler: (args) => {
+        const { path: p, offset, limit } = (args ?? {}) as { path?: string; offset?: number; limit?: number };
+        if (!p) return Promise.resolve({ result: 'code_read 需要 path', is_error: true });
+        const params: Record<string, unknown> = { path: p };
+        if (offset !== undefined) params.offset = offset;
+        if (limit !== undefined) params.limit = limit;
+        return callTool(client, 'code_read', params);
+      },
+    },
     ...GITHUB_OPS.map((op) => ({
       def: toolDef(
         `github_${op}`,

@@ -10,6 +10,11 @@ infuture 是一体化 agent：既能处理常规任务（会话 / 模型 / 技�
 npm install
 ```
 
+> **编程能力需要 [bun](https://bun.sh)（≥ 1.3）**：LSP / DAP / AST 编辑 / 代码执行 / hashline 等编程工具由
+> infuture 经 `bun` 工具服务进程直调 `@oh-my-pi/pi-coding-agent` 编程引擎执行（`packages/coding`）。
+> 未安装 bun 时编程工具不可用，通用对话 / 会话 / 模型 / loop 不受影响。macOS/Linux 安装：
+> `curl -fsSL https://bun.sh/install | bash`
+
 ## 快速开始
 
 ```bash
@@ -176,7 +181,8 @@ npm run docker:run          # 等价 docker run --rm -p 50051:50051 infuture
 | 14 LSP 操作（`lsp_*`） | infuture（inloop 直调编程引擎） |
 | 28 DAP 操作（`dap_*`，lldb/dlv/debugpy） | infuture |
 | `execute_code`（Python/Bun worker） | infuture |
-| `ast_edit` / `ast_grep`（hashline + ast-grep） | infuture |
+| `ast_edit` / `ast_grep` | infuture（ast-grep 结构化编辑） |
+| `hash_edit` / `code_read` | infuture（hashline 锚点编辑：行号+快照tag 的 SWAP/DEL/INS/BLK/REM/MV，先 `code_read` 取锚点再 `hash_edit` 落盘） |
 | `subagent` / `review` / `git_pr` | infuture |
 | 浏览器 / 网络搜索 / 图片理解 | infuture（web_search 多 provider + web_fetch） |
 | Workbench 桌面 UI | infuture（浮动窗口 / 一致性配置设计） |

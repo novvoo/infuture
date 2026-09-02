@@ -38,6 +38,8 @@ const TOOL_WHITELIST = new Set([
   'lsp', 'debug', 'eval', 'ast_grep', 'ast_edit',
   'task', 'github', 'review', 'checkpoint',
   'browser', 'inspect_image', 'web_search', 'web_fetch',
+  // hashline 锚点编辑（独立模式路由：code_read 产出行号+快照tag → hash_edit 校验并应用）
+  'code_read', 'hash_edit',
 ]);
 
 function buildSession(cwd: string): Record<string, unknown> {
@@ -137,6 +139,66 @@ class CodingToolsService {
         this.write({ id, ok: true, result: { url, text: text.slice(0, maxChars) } });
       } catch (err) {
         this.write({ id, ok: false, error: err instanceof Error ? err.message : String(err) });
+      }
+      return;
+    }
+    // code_read：以 hashline 模式执行内置 read，输出 LINE:TEXT 行号 + [PATH#TAG] 快照tag，
+    // 并在服务端记录快照与已见行（供 hash_edit 锚点校验）。与普通 read 分离，避免污染日常阅读输出。
+    if (tool === 'code_read') {
+      const prev = process.env.PI_EDIT_VARIANT;
+      try {
+        process.env.PI_EDIT_VARIANT = 'hashline';
+        const readTool = await this.getTool('read');
+        const result = await readTool.execute(
+          `r-${String(id)}`,
+          params,
+          undefined,
+          (partial) => {
+            this.write({ type: 'update', id, partial });
+          },
+          undefined,
+        );
+        this.write({ id, ok: true, result });
+      } catch (err) {
+        this.write({
+          id,
+          ok: false,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      } finally {
+        process.env.PI_EDIT_VARIANT = prev;
+      }
+      return;
+    }
+    // hash_edit：hashline 锚点编辑（行号 + 快照tag 的 SWAP/DEL/INS/BLK/REM/MV）。
+    // 与 code_edit（replace 模式）分开：本分支临时以 hashline 模式构造 EditTool 执行。
+    // 前置条件：模型需先用 read（code_read）读过目标文件，服务端已记录快照 tag 与已见行，
+    // 否则 Patcher 会以 stale-tag / unseen-line 拒绝（防错位保护）。
+    if (tool === 'hash_edit') {
+      const prev = process.env.PI_EDIT_VARIANT;
+      try {
+        process.env.PI_EDIT_VARIANT = 'hashline';
+        const editTool = await BUILTIN_TOOLS.edit(this.session);
+        const input = typeof params.input === 'string' ? params.input : '';
+        if (!input) throw new Error('hash_edit: missing `input`');
+        const result = await editTool.execute(
+          `h-${String(id)}`,
+          { input },
+          undefined,
+          (partial) => {
+            this.write({ type: 'update', id, partial });
+          },
+          undefined,
+        );
+        this.write({ id, ok: true, result });
+      } catch (err) {
+        this.write({
+          id,
+          ok: false,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      } finally {
+        process.env.PI_EDIT_VARIANT = prev;
       }
       return;
     }
