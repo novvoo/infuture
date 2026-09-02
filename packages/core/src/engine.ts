@@ -340,7 +340,9 @@ export class Engine {
         config: defaultAgentConfig({
           systemPrompt:
             'You are infuture subagent — you execute a single delegated coding task. ' +
-            'Work autonomously using tools, then report your findings or result concisely.',
+            'Work autonomously using tools, then report your findings or result concisely.\n' +
+            '编辑默认用 hashline 锚点编辑：先 code_read 拿行号与 [PATH#TAG] tag，再传 input 给 edit/code_edit；' +
+            '只有简单唯一字符串替换才用 path/old_string/new_string。',
           maxTurns: this.settings.maxTurns,
           thinkingBudget: this.settings.thinkingBudget,
           thinkingLevel: this.settings.thinkingLevel,
@@ -488,7 +490,11 @@ export class Engine {
             '3. 每个 worker 可用 model 指定不同模型、thinking 指定思考强度（用户指定时）。\n' +
             '4. 启动后用 list_workers({goal, wait:true}) 一次性阻塞等待全部 worker 完成（全部 done/error 后返回各 worker 结论），' +
             '再向用户汇报各 worker 结论；' +
-            '用户要求"直到完成/继续迭代"时，基于已有 worker 结果 spawn 新一轮 worker。',
+            '用户要求"直到完成/继续迭代"时，基于已有 worker 结果 spawn 新一轮 worker。\n' +
+            '5. 编程编辑默认走 hashline 锚点编辑：先调 code_read 读取目标文件（输出行号与 [PATH#TAG] 快照tag），' +
+            '再调 edit / code_edit / hash_edit 并传 input（hashline 语法：SWAP N.=M: 替换行 / DEL N 删行 / ' +
+            'INS.PRE/POST N 插行 / INS.TAIL: 末尾追加 / SWAP.BLK N 整块替换 / REM / MV DEST）。' +
+            'tag 必须来自最近的 code_read 输出，禁止凭空编造；只有做简单唯一字符串替换时才用 path/old_string/new_string（replace 兜底）。',
           maxTurns: this.settings.maxTurns,
           // worker/subagent 可在 options.thinkingBudget/thinkingLevel 覆盖全局思考设置；未指定时回退全局
           thinkingBudget: options.thinkingBudget ?? this.settings.thinkingBudget,
