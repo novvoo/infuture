@@ -232,6 +232,8 @@ export class Engine {
     }
     // 会话默认 cwd 与工具相对路径统一指向新工作区
     this.sessions.setDefaultCwd(this.workspace);
+    // coding 服务 cwd 跟随 workspace：编程工具相对路径以工作区为基准解析
+    this.coding.setCwd(this.workspace);
     this.tools = this.buildToolRegistry();
     await this.saveSettingsToDisk();
   }
@@ -524,7 +526,9 @@ export class Engine {
             '5. 编程编辑默认走 hashline 锚点编辑：先调 read（或 code_read）读取目标文件——输出带行号与 [PATH#TAG] 快照tag，' +
             '再调 edit / code_edit / hash_edit 并传 input（hashline 语法：SWAP N.=M: 替换行 / DEL N 删行 / ' +
             'INS.PRE/POST N 插行 / INS.TAIL: 末尾追加 / SWAP.BLK N 整块替换 / REM / MV DEST）。' +
-            'tag 必须来自最近的 read/code_read 输出，禁止凭空编造；只有做简单唯一字符串替换时才用 path/old_string/new_string（replace 兜底）。',
+            'tag 必须来自最近的 read/code_read 输出，禁止凭空编造；只有做简单唯一字符串替换时才用 path/old_string/new_string（replace 兜底）。\n' +
+            '6. 文件/目录路径不确定时，先 list / glob 确认实际结构再操作，禁止凭记忆猜测路径；' +
+            'grep/read 输出里的行号标记（如 main.css:12 或 #12-42）只是定位信息，不是路径的一部分，禁止拼进 path 参数。',
           maxTurns: this.settings.maxTurns,
           // worker/subagent 可在 options.thinkingBudget/thinkingLevel 覆盖全局思考设置；未指定时回退全局
           thinkingBudget: options.thinkingBudget ?? this.settings.thinkingBudget,

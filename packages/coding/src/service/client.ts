@@ -40,7 +40,7 @@ export class CodingToolsClient {
   private ready = false;
   private nextId = 0;
   private buffer = '';
-  private readonly cwd: string;
+  private cwd: string;
   private readonly onLog: (line: string) => void;
   private readonly startupTimeoutMs: number;
   private readonly commandTimeoutMs: number;
@@ -69,6 +69,31 @@ export class CodingToolsClient {
 
   get available(): boolean {
     return this.ready && !!this.child && !this.child.killed;
+  }
+
+  /**
+   * 更新服务工作目录（跟随 workspace）。若服务已启动则重启——快照/seen-lines 为会话级，
+   * 切换 workspace 本就应重置；未启动则下一次 start() 用新 cwd（懒启动场景零成本）。
+   */
+  setCwd(cwd: string): void {
+    if (cwd === this.cwd) return;
+    this.cwd = cwd;
+    if (this.child && !this.child.killed) {
+      this.onLog(`[coding] restart for cwd=${cwd}`);
+      try {
+        this.child.kill();
+      } catch {
+        // ignore
+      }
+      this.child = null;
+      this.ready = false;
+      this.failAll(new Error('coding service restarted (cwd changed)'));
+    }
+  }
+
+  /** 当前服务工作目录。 */
+  get cwdPath(): string {
+    return this.cwd;
   }
 
   /** 启动并等待 ready。幂等。 */
