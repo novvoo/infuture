@@ -50,9 +50,45 @@ npm run doctor
 
 **IM 通道（channel）**：通过环境变量配置后启动桥接 —— `FEISHU_APP_ID` / `FEISHU_APP_SECRET`（飞书，`FEISHU_WS=1` 走长连接）、`DINGTALK_APP_KEY` / `DINGTALK_APP_SECRET`（钉钉）。
 
-## loop 控制平面
+## 配置 loop 命令
 
-长运行的多 worker 并行探索，事件源持久化在 `~/.future/agent/loop/events.jsonl`。
+loop 是长运行的多 worker 并行探索控制平面。**无需单独配置**：复用 `auth login` 写入的 API key 与模型，事件源持久化在 `~/.future/agent/loop/events.jsonl`。
+
+**1. 前置：配置 API key（一次性）**
+
+```bash
+npm run dev -- auth login openai sk-xxx
+```
+
+**2. 审批模式**（影响 worker 调用工具时的放行策略）：
+
+| 模式 | 说明 |
+|---|---|
+| 默认（`timeout`） | 工具审批超时自动拒绝 |
+| `--approve` | 自动批准工具调用 |
+| `--strict` | 一律拒绝（只读推进） |
+
+**3. 典型流程示例**：
+
+```bash
+# 并行探索：4 个 worker、worktree 隔离、自动批准工具
+npm run dev -- loop start "调研 RAG 检索方案选型" --workers 4 --isolate --approve
+
+# 查看状态 / 运行历史 / 可推进前沿 / worker 列表
+npm run dev -- loop status
+npm run dev -- loop runs
+npm run dev -- loop frontier
+npm run dev -- loop list
+
+# 给 worker 追加指引 / 停止
+npm run dev -- loop steer <workerId> "重点对比向量数据库的运维成本"
+npm run dev -- loop stop <workerId>
+
+# 清理目标全部状态（含 worker 会话 / 隔离目录）
+npm run dev -- loop delete --all
+```
+
+**4. 常用子命令**：
 
 | 命令 | 说明 |
 |---|---|
@@ -68,30 +104,7 @@ npm run doctor
 | `loop delete <goalId\|--all>` | 清理目标状态（含 worker 会话 / 隔离目录） |
 | `loop "<目标>" [--approve\|--strict]` | 单 goal 串行推进 |
 
-**配置与使用示例**：
-
-```bash
-# 1. 配置 API key（一次性）
-npm run dev -- auth login openai sk-xxx
-
-# 2. 并行探索：4 个 worker、worktree 隔离、自动批准工具
-npm run dev -- loop start "调研 RAG 检索方案选型" --workers 4 --isolate --approve
-
-# 3. 查看状态 / 运行历史 / 可推进前沿 / worker 列表
-npm run dev -- loop status
-npm run dev -- loop runs
-npm run dev -- loop frontier
-npm run dev -- loop list
-
-# 4. 给 worker 追加指引 / 停止
-npm run dev -- loop steer <workerId> "重点对比向量数据库的运维成本"
-npm run dev -- loop stop <workerId>
-
-# 5. 清理目标全部状态（含 worker 会话 / 隔离目录）
-npm run dev -- loop delete --all
-```
-
-**审批模式**：默认 `timeout`（工具审批超时自动拒绝）；`--approve` 自动批准；`--strict` 一律拒绝（只读推进）。事件源持久化在 `~/.future/agent/loop/events.jsonl`，可用 `loop backup` 备份；后端端口由 `INFUTURE_PORT` 控制（默认 `50051`）。
+**5. 环境变量**：后端端口 `INFUTURE_PORT`（默认 `50051`）。
 
 ## 桌面 Workbench
 
@@ -101,18 +114,22 @@ npm run dev -- loop delete --all
   npm run desktop:server   # 后端 ws://127.0.0.1:50051
   npm run desktop:dev      # 前端 http://127.0.0.1:5173
   ```
-- 构建产物：`npm run desktop:build`
 
-## 构建与发布产物
+## 发布产物
+
+**1. 构建前端产物**（输出到 `apps/desktop/dist/`）：
 
 ```bash
-npm run desktop:build       # 构建前端 → apps/desktop/dist/
-npm run desktop:server      # 后端 JSON-RPC（检测到 dist 后在同一端口托管页面）
+npm run desktop:build
 ```
 
-构建后直接 `npm run desktop:server`，打开 `http://127.0.0.1:50051` 即可访问完整 Web 应用（同一端口同时提供页面与 ws，无需额外静态服务器）。
+**2. 本地运行产物**：后端检测到 dist 后在同一端口托管页面与 ws，无需额外静态服务器：
 
-**Docker 部署**（镜像内置国内 npm 镜像源，多层构建）：
+```bash
+npm run desktop:server      # 打开 http://127.0.0.1:50051 即完整 Web 应用
+```
+
+**3. Docker 部署**（镜像内置国内 npm 镜像源，多层构建）：
 
 ```bash
 npm run docker:build        # 等价 docker build -t infuture .
