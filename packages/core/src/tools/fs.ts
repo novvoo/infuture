@@ -12,19 +12,34 @@ function resolvePath(p: string, cwd: string): string {
   return path.isAbsolute(p) ? p : path.resolve(cwd, p);
 }
 
-export function readTool(cwd = process.cwd()): AgentTool {
+export interface ReadToolDeps {
+  /** hashline 读执行器：经 coding 服务 code_read（hashline 模式 read），产出行号 + [PATH#TAG] 快照tag 并记录快照，供后续 edit(input) 使用。 */
+  hashlineRead?: (path: string) => Promise<{ result: string; is_error: boolean }>;
+}
+
+export function readTool(cwd = process.cwd(), deps: ReadToolDeps = {}): AgentTool {
   return {
-    def: toolDef('read', 'Read a file from disk and return its contents.', {
+    def: toolDef('read', 'Read a file — outputs line numbers and a [PATH#TAG] snapshot anchor usable for hashline editing (edit/code_edit with input); falls back to plain contents when the engine is unavailable.', {
       type: 'object',
       properties: { path: { type: 'string', description: 'Absolute or relative path' } },
       required: ['path'],
     }),
-    guidelines: ['Prefer read over shell cat', 'Large files: read with offset/limit'],
+    guidelines: ['Prefer read over shell cat', 'Large files: read with offset/limit', '读出的 [PATH#TAG] 与行号可直接用于 edit 的 input（hashline）'],
     handler: async (args, ctx): Promise<ToolCallResult> => {
       const { path: p } = (args ?? {}) as { path?: string };
       if (!p) return { result: 'read: missing `path`', is_error: true };
+      const target = resolvePath(p, ctx?.cwd ?? cwd);
+      // 引擎可用时经服务端 code_read：产出 tag + 行号并记录快照；引擎挂掉/不可用回退本地读
+      if (deps.hashlineRead) {
+        try {
+          const r = await deps.hashlineRead(target);
+          return { result: r.result, is_error: r.is_error };
+        } catch {
+          /* 引擎连接失败 → 回退本地 */
+        }
+      }
       try {
-        const data = await fs.readFile(resolvePath(p, ctx?.cwd ?? cwd), 'utf-8');
+        const data = await fs.readFile(target, 'utf-8');
         return { result: data, is_error: false };
       } catch (err) {
         return { result: `read failed: ${err instanceof Error ? err.message : String(err)}`, is_error: true };
