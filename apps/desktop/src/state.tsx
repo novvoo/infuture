@@ -143,7 +143,7 @@ export function useAppApi(): AppApi {
 
 /** 是否为编程工具（inloop 直调编程能力的工具名）。 */
 function isCodingTool(name: string): boolean {
-  return /^(lsp_|dap_|execute_code|bash|ast_|subagent|review|git_)/.test(name);
+  return /^(lsp_|dap_|execute_code|bash|ast_|subagent|review|git_|code_edit|hash_edit|code_read)/.test(name);
 }
 
 /** 把 worker 运行事件转成日志条目（前端展示用）。 */

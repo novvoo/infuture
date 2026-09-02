@@ -145,6 +145,20 @@ body {
   white-space: pre-wrap;
 }
 
+/* 工具结果消息（斜杠直调回写）：等宽 + 折叠，保留 hashline diff/行号对齐 */
+.tool-msg { margin-top: 6px; }
+.tool-msg-head {
+  font-family: var(--mono); font-size: 12px; font-weight: 600;
+  color: var(--yellow); margin-bottom: 6px;
+}
+.tool-msg-body {
+  font-family: var(--mono); font-size: 12px; line-height: 1.55;
+  background: rgba(0,0,0,.18); border: 1px solid var(--border); border-radius: 8px;
+  padding: 10px 12px; margin: 0; white-space: pre-wrap; word-break: break-word;
+}
+.tool-msg-body code { background: none; padding: 0; }
+.tool-msg .btn { margin-top: 6px; }
+
 /* 输入区 */
 .composer {
   border-top: 1px solid var(--border); padding: 14px 20px 18px;

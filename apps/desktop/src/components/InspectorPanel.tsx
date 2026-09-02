@@ -91,7 +91,10 @@ export function InspectorPanel() {
             {item.coding && <span className="badge code">{item.kind === 'tool_call' ? 'code' : '·'}</span>}
             <span style={{ fontFamily: 'var(--mono)', color: 'var(--text)' }}>{item.label}</span>
           </div>
-          <div className="tool-result" style={{ marginLeft: 22 }}>{item.detail}</div>
+          {/* 工具结果/参数用等宽 pre 渲染：hashline diff、code_read 行号等保持对齐可读；超长折叠 */}
+          <pre className="tool-result" style={{ marginLeft: 22, whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: 220, overflow: 'auto' }}>
+            {item.detail}
+          </pre>
         </div>
       ))}
     </aside>

@@ -89,7 +89,8 @@ function WorkerLogs({ logs }: { logs: WorkerLogEntry[] }) {
         if (e.kind === 'result') {
           return (
             <div key={i} className="wlog-line">
-              <span className={logClass(e)}>↳ {e.name}: {e.detail}</span>
+              <span className={logClass(e)}>↳ {e.name}:</span>{' '}
+              <span style={{ fontFamily: 'var(--mono)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{e.detail}</span>
             </div>
           );
         }

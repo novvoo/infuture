@@ -1,8 +1,40 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import { useAppState } from '../state';
+
+/** 工具结果消息识别：斜杠直调写回历史的格式为 `[工具名]\n<结果>`。 */
+const TOOL_RESULT_RE = /^\[[a-z_][a-z0-9_]*\]\n/;
+
+/**
+ * 工具结果块：等宽 `<pre>` 渲染（保留 hashline diff 的 `+/-` 对齐与行号，避免被 Markdown 当列表/链接），
+ * 超长输出默认折叠（可展开）。code_read 整文件行号、hashline diff 等在此保持原样可读。
+ */
+function ToolResultBlock({ text }: { text: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const nl = text.indexOf('\n');
+  const head = nl === -1 ? text : text.slice(0, nl);
+  const body = nl === -1 ? '' : text.slice(nl + 1);
+  const lineCount = body ? body.split('\n').length : 0;
+  const long = lineCount > 24 || body.length > 2400;
+  const showAll = expanded || !long;
+  return (
+    <div className="tool-msg">
+      <div className="tool-msg-head">{head}</div>
+      {body && (
+        <pre className="tool-msg-body" style={showAll ? {} : { maxHeight: 320, overflow: 'auto' }}>
+          {body}
+        </pre>
+      )}
+      {long && (
+        <button className="btn ghost sm" onClick={() => setExpanded((e) => !e)}>
+          {expanded ? '收起' : `展开全部（${lineCount} 行）`}
+        </button>
+      )}
+    </div>
+  );
+}
 
 /** 用 markdown + GFM + 语法高亮渲染文本。默认不渲染 raw HTML（react-markdown 安全）。 */
 export function Markdown({ text }: { text: string }) {
@@ -62,7 +94,9 @@ export function MessageLog() {
                 <div className="reasoning-text">{m.reasoning}</div>
               </details>
             )}
-            {m.role === 'assistant' && m.text ? (
+            {m.role === 'assistant' && TOOL_RESULT_RE.test(m.text ?? '') ? (
+              <ToolResultBlock text={m.text ?? ''} />
+            ) : m.role === 'assistant' && m.text ? (
               <Markdown text={m.text} />
             ) : (
               <span>{m.text || (m.reasoning ? '' : '…')}</span>
