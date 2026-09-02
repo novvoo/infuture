@@ -1,0 +1,26 @@
+node_modules/
+dist/
+*.log
+.DS_Store
+.env
+.agent-data/
+target/
+
+# 运行时状态 / 临时目录
+.loop/
+.scratch/
+.future/
+
+# 构建与缓存产物
+*.tsbuildinfo
+coverage/
+.vite/
+.cache/
+
+# 临时验证/调试脚本
+tmp-*
+*.tmp
+
+# IDE
+.vscode/
+.idea/

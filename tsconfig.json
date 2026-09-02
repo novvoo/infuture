@@ -1,0 +1,38 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022", "DOM"],
+    "jsx": "react-jsx",
+    "strict": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "forceConsistentCasingInFileNames": true,
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@infuture/types": ["packages/types/src/index.ts"],
+      "@infuture/llm": ["packages/llm/src/index.ts"],
+      "@infuture/core": ["packages/core/src/index.ts"],
+      "@infuture/coding": ["packages/coding/src/index.ts"],
+      "@infuture/rpc": ["packages/rpc/src/index.ts"],
+      "@infuture/channels": ["packages/channels/src/index.ts"],
+      "@infuture/loop": ["packages/loop/src/index.ts"],
+      "@infuture/cli": ["packages/cli/src/index.ts"],
+      "@infuture/tui": ["apps/tui/src/index.ts"]
+    }
+  },
+  "include": [
+    "packages/*/src/**/*.ts",
+    "apps/desktop/src/**/*.ts",
+    "apps/desktop/src/**/*.tsx",
+    "apps/tui/src/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "packages/coding/src/service/server.ts"
+  ]
+}

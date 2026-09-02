@@ -1,0 +1,15 @@
+import { LoopStore } from '../packages/loop/src/store.ts';
+import { LoopPlanner } from '../packages/loop/src/planner.ts';
+import { LoopControl } from '../packages/loop/src/control.ts';
+import { WorkerRuntime } from '../packages/loop/src/worker.ts';
+const store = new LoopStore(process.env.HOME + '/.future/agent/loop/events.jsonl');
+const planner = new LoopPlanner({ engine: {} as any, approvalMode: 'auto', store });
+const g = planner.createGoal('g-demo', '验证 loop 控制平面命令', ['命令可跑']);
+const a = planner.addTodo(g.id, '准备数据');
+const b = planner.addTodo(g.id, '分析结果', [a.id]);
+planner.addTodo(g.id, '独立报告');
+planner.addGate(g.id, 'evidence', '有证据', 1);
+store.acquireLease({ id: 'lease_1', goalId: g.id, holder: 'tester', acquiredAt: Date.now(), expiresAt: Date.now() + 60000 });
+store.addWorker({ id: 'w_demo', goalId: g.id, title: '探索 demo', status: 'running', sessionId: 's1', runId: 'r1', cwd: '/tmp', createdAt: Date.now() - 3000, updatedAt: Date.now() });
+await store.persist();
+console.log('seeded goal ' + g.id);

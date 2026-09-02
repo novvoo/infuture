@@ -1,0 +1,34 @@
+{
+  "name": "infuture",
+  "version": "0.1.0",
+  "private": true,
+  "description": "One AI agent, everywhere you work — a TypeScript refactor of FutureOS integrating the oh-my-pi coding agent.",
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsx packages/cli/src/index.ts",
+    "agent": "tsx packages/cli/src/index.ts agent",
+    "chat": "tsx packages/cli/src/index.ts chat",
+    "tui": "tsx packages/cli/src/index.ts tui",
+    "doctor": "tsx packages/cli/src/index.ts doctor",
+    "test": "tsx --test packages/*/tests/*.test.ts",
+    "desktop:dev": "npm run dev --workspace @infuture/desktop",
+    "desktop:build": "npm run build --workspace @infuture/desktop",
+    "desktop:server": "npm run server --workspace @infuture/desktop",
+    "desktop": "node scripts/desktop-dev.mjs"
+  },
+  "dependencies": {
+    "tsx": "^4.19.0"
+  },
+  "devDependencies": {
+    "@oh-my-pi/pi-coding-agent": "^16.4.6",
+    "@types/node": "^22.10.0",
+    "concurrently": "^9.2.4",
+    "typescript": "^5.7.0"
+  }
+}
