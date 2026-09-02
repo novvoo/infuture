@@ -59,28 +59,49 @@ export function writeTool(cwd = process.cwd()): AgentTool {
   };
 }
 
-export function editTool(cwd = process.cwd()): AgentTool {
+export interface EditToolDeps {
+  /** hashline 编辑执行器：输入 hashline 语法文本（行号 + 快照tag），由引擎侧注入（coding 服务 code_edit）。 */
+  hashline?: (input: string) => Promise<{ result: string; is_error: boolean }>;
+}
+
+export function editTool(cwd = process.cwd(), deps: EditToolDeps = {}): AgentTool {
   return {
-    def: toolDef('edit', 'Apply a string replacement in a file (old_string → new_string).', {
+    def: toolDef('edit', 'Edit a file — default hashline anchor edit (line-number + snapshot tag from code_read output); fallback old_string → new_string string replacement.', {
       type: 'object',
       properties: {
+        input: { type: 'string', description: 'hashline 语法文本（默认）：形如 [path#TAG]\\nSWAP 2.=2:\\n+ 新行…，锚点来自最近的 code_read 输出' },
         path: { type: 'string' },
         old_string: { type: 'string' },
         new_string: { type: 'string' },
         replace_all: { type: 'boolean' },
       },
-      required: ['path', 'old_string', 'new_string'],
     }),
-    guidelines: ['old_string must be unique unless replace_all=true'],
+    guidelines: [
+      'edit 默认走 hashline 锚点编辑：先用 code_read 读取目标文件获取行号与 [PATH#TAG] 快照tag，再传 input（SWAP N.=M / DEL N / INS.PRE/POST N / SWAP.BLK N / REM / MV DEST）',
+      '需要简单唯一字符串替换时，可传 path/old_string/new_string（replace 兜底）',
+      'input 与 old_string 二选一，优先 input',
+    ],
     handler: async (args, ctx): Promise<ToolCallResult> => {
-      const { path: p, old_string, new_string, replace_all } = (args ?? {}) as {
+      const { input, path: p, old_string, new_string, replace_all } = (args ?? {}) as {
+        input?: string;
         path?: string;
         old_string?: string;
         new_string?: string;
         replace_all?: boolean;
       };
+      if (input && input.trim()) {
+        if (!deps.hashline) {
+          return { result: 'edit(input): hashline 路由不可用（编程引擎未接入）', is_error: true };
+        }
+        try {
+          const r = await deps.hashline(input);
+          return { result: r.result, is_error: r.is_error };
+        } catch (err) {
+          return { result: `edit(hashline) failed: ${err instanceof Error ? err.message : String(err)}`, is_error: true };
+        }
+      }
       if (!p || old_string === undefined || new_string === undefined) {
-        return { result: 'edit: missing `path` / `old_string` / `new_string`', is_error: true };
+        return { result: 'edit: missing `input`（hashline）或 `path` / `old_string` / `new_string`（replace）', is_error: true };
       }
       try {
         const target = resolvePath(p, ctx?.cwd ?? cwd);

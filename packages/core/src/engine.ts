@@ -132,7 +132,29 @@ export class Engine {
   private buildToolRegistry(): ToolRegistry {
     const registry = new ToolRegistry();
     const cwd = this.workspace || process.cwd();
-    registry.registerAll([readTool(cwd), writeTool(cwd), editTool(cwd), listTool(cwd), shellTool({ cwd })]);
+    registry.registerAll([
+      readTool(cwd),
+      writeTool(cwd),
+      editTool(cwd, {
+        // edit 走 hashline 路由：input（hashline 语法）→ coding 服务 code_edit（默认 hashline）；replace 参数走本地兜底
+        hashline: async (input) => {
+          try {
+            const res = (await this.coding.call('code_edit', { input })) as {
+              content?: Array<{ type?: string; text?: string }>;
+              isError?: boolean;
+            };
+            return {
+              result: extractPartialText(res) || '(hashline edit: no text output)',
+              is_error: Boolean(res?.isError),
+            };
+          } catch (err) {
+            return { result: `edit(hashline) failed: ${err instanceof Error ? err.message : String(err)}`, is_error: true };
+          }
+        },
+      }),
+      listTool(cwd),
+      shellTool({ cwd }),
+    ]);
     // worker 协作：普通对话经 spawn_workers 工具启动多 worker、list_workers 读取结果（desktop 注入运行时）
     registry.register(spawnWorkersTool(this.workerSpawner));
     registry.register(listWorkersTool(this.workerLister));
