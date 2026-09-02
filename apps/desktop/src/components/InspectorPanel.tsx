@@ -2,16 +2,34 @@ import React, { useState } from 'react';
 import { useAppState } from '../state';
 
 /** Inspector — 运行详情/能力状态/工具调用日志。
- *  支持 docked / 浮动窗口（mastery layout-state 悬浮模式）。 */
+ *  支持 docked / 浮动窗口（mastery layout-state 悬浮模式）/ 折叠胶囊。 */
 export function InspectorPanel() {
   const { runLog, doctor, currentSessionId, settings, busy } = useAppState();
   const [floating, setFloating] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
 
   const sandboxLabel = (settings?.sandboxTier ?? 'manual') === 'sandbox' ? 'sandbox' : settings?.sandboxTier ?? 'manual';
+
+  // 折叠胶囊：只留一个小圆钮（含运行状态点），点击展开回面板；浮动态下胶囊固定悬浮。
+  if (collapsed) {
+    return (
+      <button
+        className={`inspector-capsule${floating ? ' float' : ''}`}
+        title="展开能力状态 / 运行日志"
+        onClick={() => setCollapsed(false)}
+      >
+        <span className={`capsule-dot${busy ? ' busy' : ''}`} />
+        ⚙
+      </button>
+    );
+  }
 
   return (
     <aside className={`inspector ${floating ? 'float' : ''}`}>
       <div className="inspector-toolbar">
+        <button className="btn ghost sm" title="折叠为胶囊" onClick={() => setCollapsed(true)}>
+          —
+        </button>
         <button
           className="btn ghost sm"
           title={floating ? '停靠回侧栏' : '浮动为独立窗口'}

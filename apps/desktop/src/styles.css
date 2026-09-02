@@ -354,7 +354,22 @@ body {
   width: 340px; border: 1px solid var(--border-strong);
   border-radius: var(--radius-lg); box-shadow: var(--shadow-float); z-index: 40;
 }
-.inspector-toolbar { display: flex; justify-content: flex-end; margin-bottom: 4px; }
+.inspector-toolbar { display: flex; justify-content: flex-end; margin-bottom: 4px; gap: 6px; }
+
+/* Inspector 折叠胶囊 */
+.inspector-capsule {
+  width: 40px; height: 40px; border-radius: 999px; flex: none;
+  margin: 16px auto 0; padding: 0;
+  background: var(--bg-raised); border: 1px solid var(--border);
+  color: var(--text-dim); font-size: 16px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  position: relative; box-shadow: var(--shadow-float);
+}
+.inspector-capsule:hover { color: var(--text); border-color: var(--accent); }
+.inspector-capsule.float { position: fixed; top: 80px; right: 24px; margin: 0; z-index: 40; }
+.capsule-dot { position: absolute; top: 8px; right: 8px; width: 8px; height: 8px; border-radius: 50%; background: var(--green); }
+.capsule-dot.busy { background: var(--yellow); animation: capsule-pulse 1.2s ease-in-out infinite; }
+@keyframes capsule-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
 
 /* 模型菜单 */
 .model-menu { position: relative; }
