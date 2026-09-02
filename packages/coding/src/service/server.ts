@@ -17,8 +17,8 @@
  *   流式  { "type": "update", "id": ..., "partial": AgentToolResult }
  */
 // @ts-nocheck — 本文件仅由 bun 运行时执行（import 编程引擎源码），不参与 node 侧 tsc 检查。
-// 直调模式用结构化参数（path+edits）而非 hashline 文本，强制 edit 走 replace 模式。
-process.env.PI_EDIT_VARIANT = 'replace';
+// 编辑默认走 hashline（与 omp 引擎 DEFAULT_EDIT_MODE 一致）；code_edit 传 replace 参数时以 replace 兜底。
+// 不在此强制 PI_EDIT_VARIANT —— 由下方 code_edit/hash_edit 分派按参数临时设置。
 import { BUILTIN_TOOLS } from '../../../../node_modules/@oh-my-pi/pi-coding-agent/src/tools/index.ts';
 import { Settings } from '../../../../node_modules/@oh-my-pi/pi-coding-agent/src/config/settings.ts';
 import { discoverAuthStorage } from '../../../../node_modules/@oh-my-pi/pi-coding-agent/src/sdk.ts';
@@ -39,7 +39,8 @@ const TOOL_WHITELIST = new Set([
   'task', 'github', 'review', 'checkpoint',
   'browser', 'inspect_image', 'web_search', 'web_fetch',
   // hashline 锚点编辑（独立模式路由：code_read 产出行号+快照tag → hash_edit 校验并应用）
-  'code_read', 'hash_edit',
+  // code_edit 走统一分派：默认 hashline，传 replace 参数时兜底 replace
+  'code_edit', 'code_read', 'hash_edit',
 ]);
 
 function buildSession(cwd: string): Record<string, unknown> {
@@ -170,20 +171,34 @@ class CodingToolsService {
       }
       return;
     }
-    // hash_edit：hashline 锚点编辑（行号 + 快照tag 的 SWAP/DEL/INS/BLK/REM/MV）。
-    // 与 code_edit（replace 模式）分开：本分支临时以 hashline 模式构造 EditTool 执行。
-    // 前置条件：模型需先用 read（code_read）读过目标文件，服务端已记录快照 tag 与已见行，
+    // 编辑工具统一路由（默认 hashline，replace 兜底）：
+    //  - hash_edit：恒走 hashline（行号+快照tag 锚点编辑）
+    //  - code_edit：传 `input`（hashline 语法）→ hashline；传 path/old_text/new_text → replace 兜底
+    // hashline 前置：模型需先用 code_read 读过目标文件，服务端已记录快照 tag 与已见行，
     // 否则 Patcher 会以 stale-tag / unseen-line 拒绝（防错位保护）。
-    if (tool === 'hash_edit') {
+    if (tool === 'code_edit' || tool === 'hash_edit') {
+      const useHashline =
+        tool === 'hash_edit' ||
+        (params && typeof params.input === 'string' && params.input.trim() !== '');
       const prev = process.env.PI_EDIT_VARIANT;
       try {
-        process.env.PI_EDIT_VARIANT = 'hashline';
+        process.env.PI_EDIT_VARIANT = useHashline ? 'hashline' : 'replace';
         const editTool = await BUILTIN_TOOLS.edit(this.session);
-        const input = typeof params.input === 'string' ? params.input : '';
-        if (!input) throw new Error('hash_edit: missing `input`');
+        let args: Record<string, unknown>;
+        if (useHashline) {
+          const input = typeof params.input === 'string' ? params.input : '';
+          if (!input) throw new Error('hash_edit 需要 input（hashline 语法文本）');
+          args = { input };
+        } else {
+          const { path: p, edits } = params as { path?: string; edits?: unknown };
+          if (!p || !Array.isArray(edits)) {
+            throw new Error('code_edit 需要 input（hashline，默认）或 path/old_text/new_text（replace 兜底）');
+          }
+          args = { path: p, edits };
+        }
         const result = await editTool.execute(
-          `h-${String(id)}`,
-          { input },
+          `c-${String(id)}`,
+          args,
           undefined,
           (partial) => {
             this.write({ type: 'update', id, partial });

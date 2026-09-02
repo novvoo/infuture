@@ -482,22 +482,37 @@ export function codingTools(client: CodingToolsClient | null, options: CodingToo
       },
     },
     {
-      def: toolDef('code_edit', '文本编辑（内置 EditTool replace 模式，内置 git 冲突标记检测与冲突历史记忆）', {
+      def: toolDef('code_edit', '编辑文件（默认 hashline 锚点编辑：行号+快照tag；也可用 path/old_text/new_text 走 replace 兜底。内置 git 冲突标记检测与冲突历史记忆）', {
         type: 'object',
         properties: {
-          path: { type: 'string', description: '目标文件路径' },
-          old_text: { type: 'string' },
-          new_text: { type: 'string' },
+          input: { type: 'string', description: 'hashline 语法文本（默认模式）：形如 [path#TAG]\\nSWAP 2.=2:\\n+ 新行…；锚点来自最近的 code_read 输出' },
+          path: { type: 'string', description: '目标文件路径（replace 兜底模式用）' },
+          old_text: { type: 'string', description: '待替换原文（replace 兜底模式用）' },
+          new_text: { type: 'string', description: '替换后文本（replace 兜底模式用）' },
         },
-        required: ['path', 'old_text', 'new_text'],
       }),
-      guidelines: ['code_edit 直调内置 edit 工具（replace 模式；比通用 edit 多冲突检测/记忆）'],
+      guidelines: [
+        'code_edit 默认走 hashline 锚点编辑：先用 code_read 读取目标文件获取行号与 [PATH#TAG] 快照tag，再传 input（SWAP N.=M / DEL N / INS.PRE/POST N / SWAP.BLK N / REM / MV DEST）',
+        '需要简单文本替换时，可传 path/old_text/new_text 走 replace 兜底（与通用 edit 相同）',
+        'input 与 path/old_text/new_text 二选一，优先 input',
+      ],
       handler: (args) => {
-        const { path: p, old_text, new_text } = (args ?? {}) as { path?: string; old_text?: string; new_text?: string };
-        if (!p || !old_text || new_text === undefined) {
-          return Promise.resolve({ result: 'code_edit 需要 path/old_text/new_text', is_error: true });
+        const { input, path: p, old_text, new_text } = (args ?? {}) as {
+          input?: string;
+          path?: string;
+          old_text?: string;
+          new_text?: string;
+        };
+        if (input && input.trim()) {
+          return callTool(client, 'code_edit', { input });
         }
-        return callTool(client, 'edit', { path: p, edits: [{ old_text, new_text }] });
+        if (!p || !old_text || new_text === undefined) {
+          return Promise.resolve({
+            result: 'code_edit 需要 input（hashline，默认）或 path/old_text/new_text（replace 兜底）',
+            is_error: true,
+          });
+        }
+        return callTool(client, 'code_edit', { path: p, edits: [{ old_text, new_text }] });
       },
     },
     {
