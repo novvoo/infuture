@@ -528,7 +528,9 @@ export class Engine {
             'INS.PRE/POST N 插行 / INS.TAIL: 末尾追加 / SWAP.BLK N 整块替换 / REM / MV DEST）。' +
             'tag 必须来自最近的 read/code_read 输出，禁止凭空编造；只有做简单唯一字符串替换时才用 path/old_string/new_string（replace 兜底）。\n' +
             '6. 文件/目录路径不确定时，先 list / glob 确认实际结构再操作，禁止凭记忆猜测路径；' +
-            'grep/read 输出里的行号标记（如 main.css:12 或 #12-42）只是定位信息，不是路径的一部分，禁止拼进 path 参数。',
+            'grep/read 输出里的行号标记（如 main.css:12 或 #12-42）只是定位信息，不是路径的一部分，禁止拼进 path 参数。\n' +
+            '7. 当任务产出 HTML 网页/可视化内容时，除了按需保存文件，还必须在最终回复里用 ```html 代码块包裹完整 HTML 输出，' +
+            'web 端会自动把它渲染成可交互网页预览（不要只给文件路径或描述）。',
           maxTurns: this.settings.maxTurns,
           // worker/subagent 可在 options.thinkingBudget/thinkingLevel 覆盖全局思考设置；未指定时回退全局
           thinkingBudget: options.thinkingBudget ?? this.settings.thinkingBudget,
