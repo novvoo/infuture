@@ -36,7 +36,51 @@ function ToolResultBlock({ text }: { text: string }) {
   );
 }
 
-/** 用 markdown + GFM + 语法高亮渲染文本。默认不渲染 raw HTML（react-markdown 安全）。 */
+/** 递归提取 React 子树纯文本（rehypeHighlight 会把代码包成 hljs span，直接 String() 会得到 [object Object]）。 */
+function extractCodeText(children: React.ReactNode): string {
+  if (typeof children === 'string' || typeof children === 'number') return String(children);
+  if (Array.isArray(children)) return children.map(extractCodeText).join('');
+  if (React.isValidElement(children)) {
+    const p = (children as React.ReactElement<{ children?: React.ReactNode }>).props;
+    return extractCodeText(p?.children ?? '');
+  }
+  return '';
+}
+
+/** HTML 代码块 → 可交互 iframe 网页预览（srcDoc 内联渲染），可切换源码。 */
+function HtmlBlock({ code }: { code: string }) {
+  const [mode, setMode] = useState<'preview' | 'code'>('preview');
+  return (
+    <div className="html-block">
+      <div className="html-block-bar">
+        <span>网页预览</span>
+        <div>
+          <button className={`btn ghost sm ${mode === 'preview' ? 'active' : ''}`} onClick={() => setMode('preview')}>
+            预览
+          </button>
+          <button className={`btn ghost sm ${mode === 'code' ? 'active' : ''}`} onClick={() => setMode('code')}>
+            源码
+          </button>
+        </div>
+      </div>
+      {mode === 'preview' ? (
+        <iframe
+          className="html-frame"
+          srcDoc={code}
+          sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+          title="html preview"
+        />
+      ) : (
+        <pre className="html-block-code">
+          <code>{code}</code>
+        </pre>
+      )}
+    </div>
+  );
+}
+
+/** 用 markdown + GFM + 语法高亮渲染文本。默认不渲染 raw HTML（react-markdown 安全）；
+ *  HTML 代码块（language-html）自动渲染为 iframe 网页预览。 */
 export function Markdown({ text }: { text: string }) {
   return (
     <div className="md">
@@ -45,13 +89,26 @@ export function Markdown({ text }: { text: string }) {
         rehypePlugins={[rehypeHighlight]}
         components={{
           a: ({ node, ...props }) => <a {...props} target="_blank" rel="noreferrer" />,
-          pre: ({ node, ...props }) => <pre {...props} />,
-          code: ({ node, className, ...props }) =>
-            className && className.includes('language-') ? (
+          // HTML 代码块：交给 HtmlBlock（含 iframe 预览 + 源码切换），外层不再套 pre
+          pre: ({ node, children, ...props }) => {
+            const child = node?.children?.[0];
+            const isHtml =
+              child?.type === 'element' &&
+              child.tagName === 'code' &&
+              Array.isArray(child.properties?.className) &&
+              (child.properties?.className as string[]).includes('language-html');
+            return isHtml ? <>{children}</> : <pre {...props}>{children}</pre>;
+          },
+          code: ({ node, className, ...props }) => {
+            if (className && className.includes('language-html')) {
+              return <HtmlBlock code={extractCodeText(props.children).replace(/\n$/, '')} />;
+            }
+            return className && className.includes('language-') ? (
               <code className={className} {...props} />
             ) : (
               <code {...props} style={{ background: 'rgba(127,127,127,.15)', padding: '1px 5px', borderRadius: 4, fontSize: '0.92em' }} />
-            ),
+            );
+          },
         }}
       >
         {text}
