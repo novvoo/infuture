@@ -538,7 +538,12 @@ export class Engine {
             '点击 UI 元素、在非浏览器窗口输入文本、滚动/拖拽、检查桌面界面状态时，直接调用 computer_use，' +
             '优先于用 shell 猜测坐标模拟（shell 的 open -a 只能启动应用，不能读 UI 树或点击元素）。' +
             '流程：先 list_apps 确认可用应用 → get_app_state 拿 UI 树与 element_index → 用 element_index 精确操作；' +
-            'macOS 首次使用前先 action=doctor 检查权限；element_index 必须来自最近一次 get_app_state，禁止猜测。',
+            'macOS 首次使用前先 action=doctor 检查权限；element_index 必须来自最近一次 get_app_state，禁止猜测；' +
+            '操作目标窗口时保持其原有尺寸与位置，不要缩放/最大化/全屏（除非用户明确要求）。\n' +
+            '9. 用户要求"用绘图工具/画布模拟人工还原图片"时，必须真实执行绘制而不是只给分析或 SVG：' +
+            '先用 bash/PIL 等把图片像素量化（二值化/颜色分块，得到色块坐标与颜色），' +
+            '再自动用 computer_use 打开绘图应用或画布页面（list_apps → get_app_state → click/drag 逐块绘制），' +
+            '实现像素级还原；不允许只输出颜色分析或生成 SVG 文件后声称完成。',
           maxTurns: this.settings.maxTurns,
           // worker/subagent 可在 options.thinkingBudget/thinkingLevel 覆盖全局思考设置；未指定时回退全局
           thinkingBudget: options.thinkingBudget ?? this.settings.thinkingBudget,

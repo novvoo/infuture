@@ -98,6 +98,7 @@ export function computerUseTool(options: ComputerUseToolOptions = {}): AgentTool
     }),
     guidelines: [
       '自动触发：任务需要桌面应用操作/UI 元素点击/非浏览器窗口输入/滚动拖拽/桌面状态检查时直接调用，无需用户指示；优先于 shell 猜坐标模拟',
+      '窗口礼仪：操作目标应用/窗口时保持其原有尺寸与位置，不要缩放、最大化或全屏窗口（除非用户明确要求），避免打扰用户当前工作',
       '前置：macOS 需 14+；首次用前先跑 action=doctor 检查权限，缺失时请用户授权 Accessibility 与 Screen Recording',
       '操作流程：先 list_apps 看可用应用 → get_app_state 拿当前 UI 树 → 用元素上的 element_index 做 click/type_text 等精确操作',
       'element_index 必须来自最近一次 get_app_state，跨调用或 UI 变化后重新 get_app_state，禁止猜测',
