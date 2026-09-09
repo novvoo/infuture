@@ -58,7 +58,7 @@ export interface ComputerUseToolOptions {
 
 export function computerUseTool(options: ComputerUseToolOptions = {}): AgentTool {
   return {
-    def: toolDef('computer_use', 'Control the desktop GUI (macOS/Linux/Windows) via Open Computer Use CLI — list_apps / get_app_state / click / perform_secondary_action / scroll / drag / type_text / press_key / set_value / doctor.', {
+    def: toolDef('computer_use', 'Desktop GUI control (macOS/Linux/Windows). AUTO-USE whenever the task needs to open/switch/operate a desktop app, click UI elements, type into non-browser windows, scroll/drag, or inspect desktop state — do not wait for explicit user instruction; prefer this over shell coordinate guessing. Actions: list_apps / get_app_state / click / perform_secondary_action / scroll / drag / type_text / press_key / set_value / doctor.', {
       type: 'object',
       properties: {
         action: {
@@ -80,6 +80,7 @@ export function computerUseTool(options: ComputerUseToolOptions = {}): AgentTool
       required: ['action'],
     }),
     guidelines: [
+      '自动触发：任务需要桌面应用操作/UI 元素点击/非浏览器窗口输入/滚动拖拽/桌面状态检查时直接调用，无需用户指示；优先于 shell 猜坐标模拟',
       '前置：macOS 需 14+；首次用前先跑 action=doctor 检查权限，缺失时请用户授权 Accessibility 与 Screen Recording',
       '操作流程：先 list_apps 看可用应用 → get_app_state 拿当前 UI 树 → 用元素上的 element_index 做 click/type_text 等精确操作',
       'element_index 必须来自最近一次 get_app_state，跨调用或 UI 变化后重新 get_app_state，禁止猜测',

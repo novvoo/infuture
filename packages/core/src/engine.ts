@@ -534,8 +534,10 @@ export class Engine {
             'grep/read 输出里的行号标记（如 main.css:12 或 #12-42）只是定位信息，不是路径的一部分，禁止拼进 path 参数。\n' +
             '7. 当任务产出 HTML 网页/可视化内容时，除了按需保存文件，还必须在最终回复里用 ```html 代码块包裹完整 HTML 输出，' +
             'web 端会自动把它渲染成可交互网页预览（不要只给文件路径或描述）。\n' +
-            '8. 需要操作系统桌面 GUI（打开/切换应用、点击、输入、滚动等）时，用 computer_use 工具：' +
-            '先 list_apps 确认可用应用 → get_app_state 拿 UI 树与 element_index → 用 element_index 精确操作；' +
+            '8. 桌面 GUI 操作自动使用 computer_use（无需用户明确指示）：任务需要打开/切换/操作桌面应用、' +
+            '点击 UI 元素、在非浏览器窗口输入文本、滚动/拖拽、检查桌面界面状态时，直接调用 computer_use，' +
+            '优先于用 shell 猜测坐标模拟（shell 的 open -a 只能启动应用，不能读 UI 树或点击元素）。' +
+            '流程：先 list_apps 确认可用应用 → get_app_state 拿 UI 树与 element_index → 用 element_index 精确操作；' +
             'macOS 首次使用前先 action=doctor 检查权限；element_index 必须来自最近一次 get_app_state，禁止猜测。',
           maxTurns: this.settings.maxTurns,
           // worker/subagent 可在 options.thinkingBudget/thinkingLevel 覆盖全局思考设置；未指定时回退全局
