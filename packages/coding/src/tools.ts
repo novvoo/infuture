@@ -14,6 +14,8 @@ import type { AgentTool, ToolCallResult } from '@infuture/types';
 import { toolDef } from '@infuture/types';
 import { DAP_OPERATIONS, LSP_OPERATIONS, type DapOperation, type LspOperation } from './capabilities.js';
 import type { CodingToolsClient } from './service/client.js';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 
 /** github 远程操作 op 集（补齐 GitHub 集成：PR 创建/推送/检出 + 搜索）。 */
 const GITHUB_OPS = [
@@ -466,19 +468,35 @@ export function codingTools(client: CodingToolsClient | null, options: CodingToo
       },
     },
     {
-      def: toolDef('inspect_image', '读取并理解图片内容（直调内置 InspectImageTool）', {
+      def: toolDef('inspect_image', '读取并理解图片内容。本地实现（不依赖外部引擎/模型）：读图片文件后返回「图片路径」标记，agent 循环自动把图片注入当前模型视野——视觉模型直接看到图并理解。', {
         type: 'object',
         properties: {
           path: { type: 'string', description: '图片文件路径' },
-          question: { type: 'string', description: '关于图片的问题' },
+          question: { type: 'string', description: '关于图片的问题（注入后模型直接回答）' },
         },
         required: ['path'],
       }),
-      guidelines: ['inspect_image 直调内置 inspect_image 工具'],
-      handler: (args) => {
+      guidelines: [
+        'inspect_image 本地读图注入：返回「图片路径」后当前视觉模型直接看到图',
+        '图片格式：JPEG 优先；PNG 会在注入端自动转 JPEG（GLM 等只接受 JPEG）',
+      ],
+      handler: async (args): Promise<ToolCallResult> => {
         const { path: p, question } = (args ?? {}) as { path?: string; question?: string };
-        if (!p) return Promise.resolve({ result: 'inspect_image: missing `path`', is_error: true });
-        return callTool(client, 'inspect_image', { path: p, ...(question ? { question } : {}) });
+        if (!p) return { result: 'inspect_image: missing `path`', is_error: true };
+        // 不再依赖 oh-my-pi 引擎的视觉模型调用（codex/gpt-5 本机无登录态会挂 120s 超时）。
+        // 本地实现：校验文件 + 返回「图片路径」标记 → run-loop 自动注入图像给当前模型。
+        const target = path.isAbsolute(p) ? p : path.resolve(process.cwd(), p);
+        try {
+          const st = await fs.stat(target);
+          if (!st.isFile()) return { result: `inspect_image: not a file: ${p}`, is_error: true };
+          if (st.size > 10 * 1024 * 1024) {
+            return { result: `inspect_image: file too large (${st.size} bytes, 上限 10MB)`, is_error: true };
+          }
+          const hint = question && question.trim() ? `\n问题：${question.trim()}` : '';
+          return { result: `图片路径: ${target}${hint}`, is_error: false };
+        } catch (err) {
+          return { result: `inspect_image: ${err instanceof Error ? err.message : String(err)}`, is_error: true };
+        }
       },
     },
     {

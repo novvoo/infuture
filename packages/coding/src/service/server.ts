@@ -44,7 +44,7 @@ const TOOL_WHITELIST = new Set([
   'read', 'write', 'edit', 'bash', 'grep', 'glob',
   'lsp', 'debug', 'eval', 'ast_grep', 'ast_edit',
   'task', 'github', 'review', 'checkpoint',
-  'browser', 'inspect_image', 'web_search', 'web_fetch',
+  'browser', 'web_search', 'web_fetch',
   // hashline 锚点编辑（独立模式路由：code_read 产出行号+快照tag → hash_edit 校验并应用）
   // code_edit 走统一分派：默认 hashline，传 replace 参数时兜底 replace
   'code_edit', 'code_read', 'hash_edit',
