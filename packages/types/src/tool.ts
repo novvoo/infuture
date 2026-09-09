@@ -62,6 +62,15 @@ export interface AgentConfig {
   maxReasoningChars?: number;
   /** 当前模型是否支持图像输入（视觉）。false 时 run-loop 会剥离注入的截图图像块，避免非视觉模型 API 报错中断。 */
   vision?: boolean;
+  /** 上下文压缩（context compaction）：长会话自动把早期历史压缩为 LLM 摘要，防止消息无限累积超窗。 */
+  contextCompaction?: {
+    /** 是否启用（默认 false，需显式开启）。 */
+    enabled?: boolean;
+    /** 触发阈值：上下文（估算）占用达到窗口的该比例时压缩。默认 0.85。 */
+    thresholdRatio?: number;
+    /** 压缩时保留最近原始消息的 token 预算。默认 20000。 */
+    keepRecentTokens?: number;
+  };
   hooks?: ToolCallHooks;
 }
 

@@ -22,6 +22,7 @@ import type { ApprovalGate } from '../sandbox/gate.js';
 import type { ToolRegistry } from '../tools/registry.js';
 import { buildSelectionContext, classifyTaskType, selectToolDefs, type ToolSelectionOptions } from '../tools/selection.js';
 import type { RunEventCallback } from './events.js';
+import { needsCompaction, compactContext } from './context.js';
 import { generateId } from '../utils/id.js';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -150,6 +151,8 @@ export interface RunLoopInput {
   approval: ApprovalGate;
   /** 编程工具是否也过审批门（'off' = 编程工具免审批直行）。 */
   codingToolsApproval?: 'on' | 'auto' | 'off';
+  /** 模型上下文窗口（token）。用于上下文压缩触发判定（contextWindow>0 且启用压缩时生效）。 */
+  contextWindow?: number;
   /** 联网工具审批（browser / web_search 等）：'off' = 免审批直行。 */
   networkToolsApproval?: 'on' | 'auto' | 'off';
   /** 通用工具审批（read/write/edit/list/shell、grep/glob/code_edit/inspect_image、github_* 等其余工具）：'on'=需审批 · 'auto'=自动审批 · 'off'=免审批直行。 */
@@ -326,6 +329,35 @@ export async function inloop(input: RunLoopInput): Promise<RunLoopResult> {
     }
     // 委派优先模式下收紧单轮推理上限：起 worker 不需要深推理
     const turnMaxReasoning = delegateMode ? DELEGATE_MAX_REASONING : maxReasoningChars;
+
+    // 上下文压缩（长会话防超窗）：每轮请求前估算，超阈值则把早期历史 LLM 摘要为一段，
+    // 保留最近 keepRecentTokens 原文。摘要失败/超时静默跳过（不阻断任务）。
+    const compactionCfg = config.contextCompaction;
+    if (compactionCfg?.enabled && !cancelled && (input.contextWindow ?? 0) > 0) {
+      const toolSpecText = JSON.stringify(selected.defs.map((d) => d.function.name)).slice(0, 4000);
+      if (
+        needsCompaction(messages, {
+          contextWindow: input.contextWindow!,
+          thresholdRatio: compactionCfg.thresholdRatio,
+          systemPrompt: config.systemPrompt,
+          toolSpecText,
+        })
+      ) {
+        await compactContext(messages, {
+          model,
+          provider,
+          systemPrompt: config.systemPrompt,
+          contextWindow: input.contextWindow!,
+          thresholdRatio: compactionCfg.thresholdRatio,
+          keepRecentTokens: compactionCfg.keepRecentTokens,
+          thinkingLevel: config.thinkingLevel ?? thinkingLevel,
+          thinkingBudget: config.thinkingBudget,
+          onEvent: emit,
+          signal,
+          runId,
+        });
+      }
+    }
 
     // 模型不支持视觉：剥离注入的 image_url 块（自动截图/工具结果截图），防止上游 1210 报错中断；
     // 并在 system prompt 追加提示，引导用文本手段（get_app_state/读文件）了解状态。

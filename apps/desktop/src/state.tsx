@@ -327,6 +327,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             ...prev,
             { kind: 'info', label: `⚡ ${ev.tool}`, detail: ev.partial.slice(0, 300), coding: true, ts: Date.now() },
           ]);
+        case 'compacted':
+          return bumpRunLog(sid, (prev) => [
+            ...prev,
+            {
+              kind: 'info',
+              label: '🧠 上下文已压缩',
+              detail: `估算 ${ev.tokensBefore} → ${ev.tokensAfter} tokens，保留最近 ${ev.keptMessages} 条消息原文`,
+              ts: Date.now(),
+            },
+          ]);
         case 'error':
           return bumpRunLog(sid, (prev) => [
             ...prev,

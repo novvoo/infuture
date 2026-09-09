@@ -11,6 +11,7 @@ export type RunEvent =
   | { type: 'approval_resolved'; runId: string; requestId: string; approved: boolean; reason?: string }
   | { type: 'usage'; runId: string; usage: Usage }
   | { type: 'complete'; runId: string; message: AgentMessage; usage?: Usage }
+  | { type: 'compacted'; runId: string; tokensBefore: number; tokensAfter: number; keptMessages: number }
   | { type: 'error'; runId: string; message: string }
   | { type: 'cancelled'; runId: string }
   | { type: 'task_type'; runId: string; taskType: 'worker' | 'visual' | 'coding' | 'web' | 'general' };
