@@ -541,10 +541,15 @@ export class Engine {
             'macOS 首次使用前先 action=doctor 检查权限；element_index 必须来自最近一次 get_app_state，禁止猜测；' +
             '操作目标窗口时保持其原有尺寸与位置，不要缩放/最大化/全屏（除非用户明确要求）。\n' +
             '9. 用户要求"用绘图工具/画布模拟人工还原图片"或任何需要看到界面/画面的任务时，走视觉闭环：' +
-            '先用 computer_use action=screenshot 截屏（截图会自动作为图像回传，你能直接看到屏幕），' +
-            '再看清参考图与画布状态后操作（list_apps → get_app_state → click/drag 逐块绘制），' +
-            '每完成一部分再 screenshot 验证并与参考图对比，直到还原；' +
-            '不允许只输出颜色分析/操作序列 JSON/SVG 后声称完成，必须真实操作画布并截图验证。\n',
+            '系统已自动截取当前屏幕并注入（视觉/截图任务首轮会自动截图，无需你再调 screenshot 也能看到屏幕）。' +
+            '禁止用 browser 打开本地 HTML 画布模拟还原（headless 无法操作画布也无法截图验证）；' +
+            '必须操作真实桌面画布/绘图应用（list_apps → get_app_state → click/drag 逐块绘制），' +
+            '每完成一部分再用 computer_use action=screenshot 截屏验证并与参考图对比，直到还原；' +
+            '不允许只输出颜色分析/操作序列 JSON/SVG 后声称完成，必须真实操作画布并截图验证。\n' +
+            '10. 画布/绘图类应用（无边记 Freeform、画板、CAD、Photoshop 等）的 UI 树通常不含画布内容：' +
+            '不要用 osascript 反复枚举菜单死磕，也不要对着空白 UI 树猜按钮；' +
+            '正确路径：screenshot 观察屏幕（能看到画布、工具栏、参考图）→ 视觉理解目标位置 → ' +
+            'click/drag 传截图像素坐标（x/y 从最近一次 screenshot 的图片像素读取）→ 操作后再次 screenshot 验证，迭代推进。\n',
           maxTurns: this.settings.maxTurns,
           // worker/subagent 可在 options.thinkingBudget/thinkingLevel 覆盖全局思考设置；未指定时回退全局
           thinkingBudget: options.thinkingBudget ?? this.settings.thinkingBudget,

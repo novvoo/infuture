@@ -13,6 +13,6 @@ export type RunEvent =
   | { type: 'complete'; runId: string; message: AgentMessage; usage?: Usage }
   | { type: 'error'; runId: string; message: string }
   | { type: 'cancelled'; runId: string }
-  | { type: 'task_type'; runId: string; taskType: 'worker' | 'coding' | 'web' | 'general' };
+  | { type: 'task_type'; runId: string; taskType: 'worker' | 'visual' | 'coding' | 'web' | 'general' };
 
 export type RunEventCallback = (event: RunEvent) => void;

@@ -96,6 +96,8 @@ export interface ToolSelectionOptions {
   always?: string[];
   /** 白名单覆盖：仅暴露这些工具（与注册表取交集）。用于"委派优先"强制模型只能起 worker。 */
   only?: string[];
+  /** 强制排除的工具名（视觉/还原任务排除 browser，避免 headless 打开本地 HTML 画布而无法真实操作）。 */
+  exclude?: string[];
 }
 
 export interface ToolSelectionResult {
@@ -148,12 +150,14 @@ export function selectToolDefs(tools: AgentTool[], contextText: string, opts: To
     if (prefixGroup) {
       if (enabledGroups.has(prefixGroup) || mentioned) enabled.add(name);
     } else if (CONDITIONAL_BY_NAME.has(name)) {
-      if (enabledGroups.has('coding') || mentioned) enabled.add(name);
+      if (enabledGroups.has('coding') || enabledGroups.has('browser') || mentioned) enabled.add(name);
     }
   }
 
   const defs = tools.filter((t) => enabled.has(t.def.function.name)).map((t) => t.def);
-  return { defs, enabledGroups: [...enabledGroups] };
+  // 强制排除（视觉/还原任务：browser 是 headless 网页工具，无法操作真实画布/截图验证）
+  const excluded = new Set(opts.exclude ?? []);
+  return { defs: excluded.size ? defs.filter((d) => !excluded.has(d.function.name)) : defs, enabledGroups: [...enabledGroups] };
 }
 
 /** 构建用于工具选择的会话上下文文本（用户文本 + assistant 文本/推理 + 已调用工具名）。 */
@@ -185,7 +189,7 @@ export function detectWorkerIntent(contextText: string): boolean {
 }
 
 /** 任务类型：决定执行路由（工具暴露 + 推理策略）。worker 为委派优先（强制 spawn），coding/web 走对应工具组，general 走核心工具。 */
-export type TaskType = 'worker' | 'coding' | 'web' | 'general';
+export type TaskType = 'worker' | 'visual' | 'coding' | 'web' | 'general';
 
 /** 编程任务关键词（与 GROUP_RULES 的 coding 组一致）。 */
 const CODING_TYPE_RE =
@@ -193,9 +197,14 @@ const CODING_TYPE_RE =
 /** 联网/检索任务关键词。 */
 const WEB_TYPE_RE = /(搜索|查一下|找一下|查找|上网|网页|网站|浏览器|browse|打开.*网页|最新消息|新闻|资讯|行情|天气)/i;
 
-/** 识别命令的任务类型。worker 优先（命中即委派优先），其次编程，其次联网，兜底通用。 */
+/** 视觉/截图任务关键词：需要看屏幕、绘图还原、界面操作、截图等场景（自动触发截图）。 */
+const VISUAL_TYPE_RE =
+  /(截[个张]?图|截屏|屏幕|画布|绘图|画画|绘制|临摹|还原|像素|看屏幕|界面|桌面|窗口|UI操作|视觉)/i;
+
+/** 识别命令的任务类型。worker 优先（命中即委派优先），其次视觉（自动截图），其次编程，其次联网，兜底通用。 */
 export function classifyTaskType(contextText: string): TaskType {
   if (detectWorkerIntent(contextText)) return 'worker';
+  if (VISUAL_TYPE_RE.test(contextText)) return 'visual';
   if (CODING_TYPE_RE.test(contextText)) return 'coding';
   if (WEB_TYPE_RE.test(contextText)) return 'web';
   return 'general';

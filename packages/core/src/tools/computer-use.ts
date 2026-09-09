@@ -108,7 +108,7 @@ const REQUIRED_ARGS: Record<string, string[]> = {
 
 export function computerUseTool(options: ComputerUseToolOptions = {}): AgentTool {
   return {
-    def: toolDef('computer_use', 'Desktop GUI control (macOS/Linux/Windows). AUTO-USE whenever the task needs to open/switch/operate a desktop app, click UI elements, type into non-browser windows, scroll/drag, or inspect desktop state — do not wait for explicit user instruction; prefer this over shell coordinate guessing. Actions: list_apps / get_app_state / screenshot / click / perform_secondary_action / scroll / drag / type_text / press_key / set_value / doctor. screenshot 截取当前屏幕并返回路径（agent 会自动把截图作为图像消息回传，视觉模型可直接看到屏幕；视觉/绘图/UI 任务先截图观察，再操作，操作后再截图验证）。', {
+    def: toolDef('computer_use', 'Desktop GUI control (macOS/Linux/Windows). AUTO-USE whenever the task needs to open/switch/operate a desktop app, click UI elements, type into non-browser windows, scroll/drag, or inspect desktop state — do not wait for explicit user instruction; prefer this over shell coordinate guessing. Actions: list_apps / get_app_state / screenshot / click / perform_secondary_action / scroll / drag / type_text / press_key / set_value / doctor. screenshot 截取当前屏幕并返回路径（agent 会自动把截图作为图像消息回传，视觉模型可直接看到屏幕；视觉/绘图/UI 任务先截图观察，再操作，操作后再截图验证）。画布类应用（无边记 Freeform、画板、绘图/设计软件、CAD、Photoshop）：无障碍树基本为空，get_app_state 只返回菜单/工具栏外壳，画布内容不可见——必须 screenshot 看屏幕后用截图像素坐标 click/drag 操作，不要用 osascript 反复枚举菜单。', {
       type: 'object',
       properties: {
         action: {
@@ -120,10 +120,11 @@ export function computerUseTool(options: ComputerUseToolOptions = {}): AgentTool
           type: 'object',
           description:
             '按 action 传对应字段：list_apps 无参数；get_app_state: {app}（可选 max_tree_nodes/max_tree_depth/text_limit 控制输出）；' +
-            'click: {app, element_index}（或用 {app, x, y} 坐标）；perform_secondary_action: {app, element_index}；' +
-            'scroll: {app, direction: up|down|left|right}；drag: {app, 起点终点元素或坐标}；' +
+            'click: {app, element_index}（优先）或 {app, x, y} 像素坐标；perform_secondary_action: {app, element_index}；' +
+            'scroll: {app, direction: up|down|left|right}；drag: {app, x1, y1, x2, y2}（起点→终点像素坐标）；' +
             'type_text: {app, text}；press_key: {app, key}；' +
-            'set_value: {app, element_index, value}（三者必填）。element_index 必须来自最近一次 get_app_state 的 UI 树。',
+            'set_value: {app, element_index, value}（三者必填）。element_index 必须来自最近一次 get_app_state 的 UI 树；' +
+            'x/y 坐标必须是最近一次 screenshot 返回截图图片的像素坐标（在截图上看准目标位置再换算，禁止凭空猜、禁止用 0-1000 归一化）。',
         },
         calls: {
           type: 'array',
@@ -138,6 +139,7 @@ export function computerUseTool(options: ComputerUseToolOptions = {}): AgentTool
       '窗口礼仪：操作目标应用/窗口时保持其原有尺寸与位置，不要缩放、最大化或全屏窗口（除非用户明确要求），避免打扰用户当前工作',
       '前置：macOS 需 14+；首次用前先跑 action=doctor 检查权限，缺失时请用户授权 Accessibility 与 Screen Recording',
       '操作流程：先 list_apps 看可用应用 → get_app_state 拿当前 UI 树 → 用元素上的 element_index 做 click/type_text 等精确操作',
+      '画布类应用（无边记 Freeform/画板/绘图软件）：UI 树不含画布内容，先 screenshot 观察屏幕与工具栏，再用截图像素坐标 click/drag；Freeform 手绘走「插入 > 绘制」或工具栏画笔按钮后按坐标拖拽，颜色在绘制前选好，画完截图验证',
       'element_index 必须来自最近一次 get_app_state，跨调用或 UI 变化后重新 get_app_state，禁止猜测',
       'get_app_state 输出过大时传 max_tree_nodes / max_tree_depth 或 text_limit 收窄；连续多步用 calls 序列复用索引',
       '不检查密码管理器等敏感内容；发送/删除/购买等外部可见操作前先询问用户',

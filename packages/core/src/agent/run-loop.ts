@@ -9,6 +9,7 @@ import {
   type AgentConfig,
   type Usage,
   addImage,
+  emptyAgentMessage,
   emptyUsage,
   newAssistantMessage,
   newToolMessage,
@@ -49,6 +50,32 @@ async function attachImagesFromResult(msg: AgentMessage, resultText: string, cwd
       // 文件不存在/读取失败：跳过，不阻断工具结果
     }
   }
+}
+
+/**
+ * 视觉/截图任务首轮自动截图：执行 computer_use action=screenshot，
+ * 把当前屏幕作为图像消息注入对话（模型首轮即可看到屏幕，无需先自觉调用工具）。
+ * 返回 null 表示截图失败或不可用（不阻断流程）。
+ */
+async function autoScreenshotForVisualTask(registry: ToolRegistry): Promise<AgentMessage | null> {
+  const r = await registry.execute('computer_use', { action: 'screenshot' });
+  const text = typeof r.result === 'string' ? r.result : JSON.stringify(r.result ?? '');
+  const m = /screenshot saved:\s*([^\s"']+\.(?:png|jpe?g|gif|webp))/i.exec(text);
+  if (!m || r.is_error) return null;
+  const p = m[1];
+  const st = await fs.stat(p);
+  if (!st.isFile() || st.size > 10 * 1024 * 1024) return null;
+  const data = await fs.readFile(p);
+  const ext = path.extname(p).toLowerCase();
+  const mime =
+    ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : ext === '.gif' ? 'image/gif' : ext === '.webp' ? 'image/webp' : 'image/png';
+  const msg = emptyAgentMessage();
+  msg.content.push({
+    type: 'text',
+    text: '[系统] 检测到视觉/截图任务，已自动截取当前屏幕并注入（screenshot）。直接基于屏幕内容开始工作；后续每完成关键步骤可再调用 computer_use action=screenshot 验证当前状态。',
+  });
+  addImage(msg, mime, data.toString('base64'));
+  return msg;
 }
 
 export interface RunLoopInput {
@@ -215,9 +242,23 @@ export async function inloop(input: RunLoopInput): Promise<RunLoopResult> {
     } else if (taskType === 'coding' && !input.toolSelection?.forceGroups) {
       toolSelection = { ...(input.toolSelection ?? {}), forceGroups: ['coding'] };
     }
+    // 视觉/还原任务：禁用 browser（headless 网页工具无法操作真实画布/截图验证），强制走 computer_use 真实画布
+    if (taskType === 'visual') {
+      toolSelection = { ...(toolSelection ?? {}), exclude: [...(toolSelection?.exclude ?? []), 'browser'] };
+    }
     const selected = selectToolDefs(registry.list(), contextText, toolSelection);
     // 识别结果透出（前端可展示"已识别：多 worker 协作任务"）
     if (turn === 0) emit({ type: 'task_type', runId, taskType });
+    // 视觉/截图类任务：首轮自动截取当前屏幕并注入图像上下文（不等模型自觉调用 computer_use）。
+    // 截图失败（如 Screen Recording 权限缺失）静默跳过，不阻断流程。
+    if (turn === 0 && taskType === 'visual') {
+      try {
+        const shot = await autoScreenshotForVisualTask(registry);
+        if (shot) messages.push(shot);
+      } catch {
+        // 自动截图非关键路径：失败不影响任务执行
+      }
+    }
     // 委派优先模式下收紧单轮推理上限：起 worker 不需要深推理
     const turnMaxReasoning = delegateMode ? DELEGATE_MAX_REASONING : maxReasoningChars;
 
