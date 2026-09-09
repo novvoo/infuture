@@ -6,6 +6,8 @@
  */
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { AgentTool, ToolCallResult } from '@infuture/types';
 import { toolDef } from '@infuture/types';
 
@@ -17,9 +19,24 @@ const CALL_TIMEOUT_MS = 120_000;
 /** 已探测到的 CLI 路径（模块级缓存，避免每次调用都探测）。 */
 let resolvedBin: string | null = null;
 
+/** 项目内 node_modules/.bin 候选（npm install 随包安装 open-computer-use，hoist 到根）。 */
+function localBinCandidates(): string[] {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const roots = new Set<string>([process.cwd(), path.resolve(here, '../../../..')]);
+  const out: string[] = [];
+  for (const root of roots) {
+    out.push(path.join(root, 'node_modules/.bin/open-computer-use'));
+    out.push(path.join(root, 'node_modules/.bin/ocu'));
+  }
+  return out;
+}
+
 async function resolveOcu(): Promise<string> {
   if (resolvedBin) return resolvedBin;
-  const candidates = [process.env.OCU_BIN, 'ocu', 'open-computer-use'].filter((x): x is string => Boolean(x));
+  const candidates: string[] = [];
+  if (process.env.OCU_BIN) candidates.push(process.env.OCU_BIN);
+  candidates.push(...localBinCandidates());
+  candidates.push('ocu', 'open-computer-use');
   for (const c of candidates) {
     try {
       await execFileAsync(c, ['-h'], { timeout: 8_000, windowsHide: true });
@@ -30,7 +47,7 @@ async function resolveOcu(): Promise<string> {
     }
   }
   throw new Error(
-    'Open Computer Use 未安装：请先 `npm i -g open-computer-use`（macOS 需 14+，首次运行授权 Accessibility 与 Screen Recording），或用 OCU_BIN 环境变量指定可执行路径',
+    'Open Computer Use 未安装：请先 `npm i -g open-computer-use`，或确认本包已通过 npm install 安装（node_modules/.bin/open-computer-use）；macOS 需 14+ 并授权 Accessibility 与 Screen Recording；也可用 OCU_BIN 环境变量指定可执行路径',
   );
 }
 
@@ -87,13 +104,16 @@ export function computerUseTool(options: ComputerUseToolOptions = {}): AgentTool
       } catch (err) {
         return { result: err instanceof Error ? err.message : String(err), is_error: true };
       }
-      const argv = ['call'];
-      if (Array.isArray(calls) && calls.length > 0) {
-        argv.push('--calls', JSON.stringify(calls));
-      } else {
-        argv.push(action);
-        if (args && typeof args === 'object' && Object.keys(args).length > 0) {
-          argv.push('--args', JSON.stringify(args));
+      // doctor 是顶级命令（ocu doctor），其余动作走 call 通道
+      const argv = action === 'doctor' ? ['doctor'] : ['call'];
+      if (action !== 'doctor') {
+        if (Array.isArray(calls) && calls.length > 0) {
+          argv.push('--calls', JSON.stringify(calls));
+        } else {
+          argv.push(action);
+          if (args && typeof args === 'object' && Object.keys(args).length > 0) {
+            argv.push('--args', JSON.stringify(args));
+          }
         }
       }
       try {
@@ -115,8 +135,10 @@ export function computerUseTool(options: ComputerUseToolOptions = {}): AgentTool
         }
         return { result, is_error: false };
       } catch (err) {
-        const e = err as { stderr?: string; message?: string };
-        return { result: `computer_use(${action}) 执行失败: ${(e.stderr ?? '').trim() || e.message || String(err)}`, is_error: true };
+        const e = err as { stderr?: string; stdout?: string; message?: string };
+        // doctor 权限缺失等场景退出码非 0 但 stderr 含诊断信息——优先透传内容
+        const detail = (e.stderr ?? '').trim() || (e.stdout ?? '').trim() || e.message || String(err);
+        return { result: `computer_use(${action}) 执行失败: ${detail}`, is_error: true };
       }
     },
   };

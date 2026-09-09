@@ -8,6 +8,7 @@
   "dependencies": {
     "@infuture/types": "*",
     "@infuture/llm": "*",
-    "@infuture/coding": "*"
+    "@infuture/coding": "*",
+    "open-computer-use": "^0.3.4"
   }
 }

@@ -15,10 +15,10 @@ npm install
 > 未安装 bun 时编程工具不可用，通用对话 / 会话 / 模型 / loop 不受影响。macOS/Linux 安装：
 > `curl -fsSL https://bun.sh/install | bash`
 >
-> **桌面 GUI 控制（`computer_use`）需要 [Open Computer Use](https://github.com/iFurySt/open-codex-computer-use) CLI**：
-> `npm i -g open-computer-use`（暴露 `ocu` / `open-computer-use` 命令）。macOS 需 14+，
-> 首次运行需在系统设置中授权 **Accessibility（辅助功能）** 与 **Screen Recording（屏幕录制）**；
-> 可用 `OCU_BIN` 环境变量覆盖 CLI 路径。未安装时 `computer_use` 工具会给出安装提示，其余能力不受影响。
+> **桌面 GUI 控制（`computer_use`）**：基于 [Open Computer Use](https://github.com/iFurySt/open-codex-computer-use) CLI（`open-computer-use`），
+> 已作为 `@infuture/core` 依赖随 `npm install` 一起安装（二进制在 `node_modules/.bin/ocu`），无需额外全局安装。
+> macOS 需 14+，首次使用前需在系统设置中授权 **Accessibility（辅助功能）** 与 **Screen Recording（屏幕录制）**
+> （`computer_use` 工具 `action=doctor` 可检查权限状态）。可用 `OCU_BIN` 环境变量覆盖 CLI 路径。
 
 ## 快速开始
 
