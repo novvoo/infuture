@@ -14,6 +14,11 @@ npm install
 > infuture 经 `bun` 工具服务进程直调 `@oh-my-pi/pi-coding-agent` 编程引擎执行（`packages/coding`）。
 > 未安装 bun 时编程工具不可用，通用对话 / 会话 / 模型 / loop 不受影响。macOS/Linux 安装：
 > `curl -fsSL https://bun.sh/install | bash`
+>
+> **桌面 GUI 控制（`computer_use`）需要 [Open Computer Use](https://github.com/iFurySt/open-codex-computer-use) CLI**：
+> `npm i -g open-computer-use`（暴露 `ocu` / `open-computer-use` 命令）。macOS 需 14+，
+> 首次运行需在系统设置中授权 **Accessibility（辅助功能）** 与 **Screen Recording（屏幕录制）**；
+> 可用 `OCU_BIN` 环境变量覆盖 CLI 路径。未安装时 `computer_use` 工具会给出安装提示，其余能力不受影响。
 
 ## 快速开始
 
@@ -188,6 +193,7 @@ npm run docker:run          # 等价 docker run --rm -p 50051:50051 infuture
 | `hash_edit` / `code_read` | infuture（hashline 锚点编辑：行号+快照tag 的 SWAP/DEL/INS/BLK/REM/MV，先 `code_read` 取锚点再 `hash_edit` 落盘） |
 | `subagent` / `review` / `git_pr` | infuture |
 | 浏览器 / 网络搜索 / 图片理解 | infuture（web_search 多 provider + web_fetch） |
+| 桌面 GUI 控制（`computer_use`） | infuture（经 Open Computer Use CLI：list_apps/get_app_state/click/type_text/press_key 等，macOS/Linux/Windows） |
 | Workbench 桌面 UI | infuture（浮动窗口 / 一致性配置设计） |
 
 ## 验证

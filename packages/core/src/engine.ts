@@ -16,6 +16,7 @@ import { DefaultApprovalGate, type ApprovalGate, type ApprovalRequest } from './
 import { ToolRegistry } from './tools/registry.js';
 import { readTool, writeTool, editTool, listTool } from './tools/fs.js';
 import { shellTool } from './tools/shell.js';
+import { computerUseTool } from './tools/computer-use.js';
 import { spawnWorkersTool, listWorkersTool, type WorkerSpawner, type WorkerLister } from './tools/worker.js';
 import { Registry, getDefaultModel } from './models/catalog.js';
 import { AuthStore } from './config/auth.js';
@@ -188,6 +189,8 @@ export class Engine {
     // worker 协作：普通对话经 spawn_workers 工具启动多 worker、list_workers 读取结果（desktop 注入运行时）
     registry.register(spawnWorkersTool(this.workerSpawner));
     registry.register(listWorkersTool(this.workerLister));
+    // 桌面 GUI 控制（Open Computer Use CLI；macOS 需授权 Accessibility/Screen Recording）
+    registry.register(computerUseTool());
     // 编程工具：inloop 经 coding tools 服务直调编程引擎（懒启动 bun 进程）
     registry.registerAll(
       codingTools(this.coding, {
@@ -530,7 +533,10 @@ export class Engine {
             '6. 文件/目录路径不确定时，先 list / glob 确认实际结构再操作，禁止凭记忆猜测路径；' +
             'grep/read 输出里的行号标记（如 main.css:12 或 #12-42）只是定位信息，不是路径的一部分，禁止拼进 path 参数。\n' +
             '7. 当任务产出 HTML 网页/可视化内容时，除了按需保存文件，还必须在最终回复里用 ```html 代码块包裹完整 HTML 输出，' +
-            'web 端会自动把它渲染成可交互网页预览（不要只给文件路径或描述）。',
+            'web 端会自动把它渲染成可交互网页预览（不要只给文件路径或描述）。\n' +
+            '8. 需要操作系统桌面 GUI（打开/切换应用、点击、输入、滚动等）时，用 computer_use 工具：' +
+            '先 list_apps 确认可用应用 → get_app_state 拿 UI 树与 element_index → 用 element_index 精确操作；' +
+            'macOS 首次使用前先 action=doctor 检查权限；element_index 必须来自最近一次 get_app_state，禁止猜测。',
           maxTurns: this.settings.maxTurns,
           // worker/subagent 可在 options.thinkingBudget/thinkingLevel 覆盖全局思考设置；未指定时回退全局
           thinkingBudget: options.thinkingBudget ?? this.settings.thinkingBudget,
