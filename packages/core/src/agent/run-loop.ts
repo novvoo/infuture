@@ -353,7 +353,12 @@ export async function inloop(input: RunLoopInput): Promise<RunLoopResult> {
       // 显式保留 thinkingBudget（含 0=关闭思考）：adapter 据此决定是否启用/关闭模型思考，
       // 避免"想一大段 reasoning 才动手"；仅当未设置（undefined）时才交给模型默认。
       thinkingBudget: config.thinkingBudget !== undefined ? config.thinkingBudget : undefined,
-      signal,
+      // 请求总超时兜底：GLM 等偶发"连接建立后无响应/SSE 中途不结束"——fetch 阶段与流阶段都有界，
+      // 避免任务永久卡死（此前除工具/审批外，LLM 调用完全无超时）。
+      signal:
+        signal && typeof AbortSignal.any === 'function'
+          ? AbortSignal.any([signal, AbortSignal.timeout(600_000)])
+          : signal,
     };
 
     const stream = withStreamTimeout(await provider.streamModel(request), 90_000, 600_000);
@@ -430,7 +435,9 @@ export async function inloop(input: RunLoopInput): Promise<RunLoopResult> {
       }
       // 模型流挂起（SSE 中途不结束）但已产出部分内容：当作本轮自然结束，保留产出继续下一轮，
       // 避免任务永久卡死；完全无产出时走下方错误终止。
-      const isStreamHang = /模型流(空闲超时|总时长超时)/.test(errMsg);
+      const isStreamHang =
+        !cancelled &&
+        /模型流(空闲超时|总时长超时)|The operation was aborted due to timeout/i.test(errMsg);
       const hasPartial = assistant.content.length > 0 || Boolean(textAcc) || Boolean(reasoningAcc);
       if (isStreamHang && hasPartial) {
         flushText();
