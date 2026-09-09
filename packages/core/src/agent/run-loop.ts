@@ -17,7 +17,7 @@ import {
   toolCalls,
   hasToolCalls,
 } from '@infuture/types';
-import type { LLMProvider, ModelStreamEvent } from '@infuture/llm';
+import type { LLMProvider, ModelStream, ModelStreamEvent } from '@infuture/llm';
 import type { ApprovalGate } from '../sandbox/gate.js';
 import type { ToolRegistry } from '../tools/registry.js';
 import { buildSelectionContext, classifyTaskType, selectToolDefs, type ToolSelectionOptions } from '../tools/selection.js';
@@ -51,6 +51,47 @@ async function readImageForInjection(p: string): Promise<{ mime: string; base64:
   }
   const data = await fs.readFile(p);
   return { mime, base64: data.toString('base64') };
+}
+
+/**
+ * 模型流超时保护：GLM 等供应商偶发"SSE 中途挂起不结束"，裸 for-await 会永久卡住任务。
+ * - 空闲超时：连续 idleMs 无任何事件 → 若已累积内容则正常结束流（保留已产出），否则抛错；
+ * - 总时长超时：整个流超过 totalMs 强制结束。
+ */
+function withStreamTimeout(stream: ModelStream, idleMs = 90_000, totalMs = 600_000): ModelStream {
+  return {
+    [Symbol.asyncIterator]() {
+      const it = stream[Symbol.asyncIterator]();
+      const started = Date.now();
+      let timers: ReturnType<typeof setTimeout>[] = [];
+      const clearTimers = () => {
+        for (const t of timers) clearTimeout(t);
+        timers = [];
+      };
+      return {
+        async next(): Promise<IteratorResult<ModelStreamEvent>> {
+          clearTimers();
+          if (Date.now() - started > totalMs) {
+            throw new Error(`模型流总时长超时（${Math.round(totalMs / 1000)}s），已中断`);
+          }
+          let idleTimer: ReturnType<typeof setTimeout> | undefined;
+          const idleP = new Promise<never>((_, rej) => {
+            idleTimer = setTimeout(() => rej(new Error(`模型流空闲超时（${Math.round(idleMs / 1000)}s 无输出）`)), idleMs);
+            timers.push(idleTimer!);
+          });
+          try {
+            return await Promise.race([it.next(), idleP]);
+          } finally {
+            clearTimers();
+          }
+        },
+        async return(): Promise<IteratorResult<ModelStreamEvent>> {
+          clearTimers();
+          return typeof it.return === 'function' ? it.return() : { done: true, value: undefined };
+        },
+      };
+    },
+  };
 }
 
 /** 工具结果文本里出现的图片路径（截图/图片文件）→ 读取并作为图像块注入同一 tool 消息，形成视觉闭环。 */
@@ -315,7 +356,7 @@ export async function inloop(input: RunLoopInput): Promise<RunLoopResult> {
       signal,
     };
 
-    const stream = await provider.streamModel(request);
+    const stream = withStreamTimeout(await provider.streamModel(request), 90_000, 600_000);
     const assistant = newAssistantMessage();
     let textAcc = '';
     let reasoningAcc = '';
@@ -384,6 +425,19 @@ export async function inloop(input: RunLoopInput): Promise<RunLoopResult> {
           if (messages[i] && messages[i].content.some((b) => b.type === 'image_url')) {
             messages[i] = { ...messages[i]!, content: messages[i]!.content.filter((b) => b.type !== 'image_url') };
           }
+        }
+        continue;
+      }
+      // 模型流挂起（SSE 中途不结束）但已产出部分内容：当作本轮自然结束，保留产出继续下一轮，
+      // 避免任务永久卡死；完全无产出时走下方错误终止。
+      const isStreamHang = /模型流(空闲超时|总时长超时)/.test(errMsg);
+      const hasPartial = assistant.content.length > 0 || Boolean(textAcc) || Boolean(reasoningAcc);
+      if (isStreamHang && hasPartial) {
+        flushText();
+        flushReasoning();
+        if (assistant.content.length > 0) {
+          lastAssistant = assistant;
+          messages.push(assistant);
         }
         continue;
       }
