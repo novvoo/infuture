@@ -56,6 +56,19 @@ export interface ComputerUseToolOptions {
   cliPath?: string;
 }
 
+/** 各 action 必填参数（缺参时给出友好提示，避免模型拿着 CLI 英文报错反复试错）。 */
+const REQUIRED_ARGS: Record<string, string[]> = {
+  list_apps: [],
+  get_app_state: ['app'],
+  click: ['app'],
+  perform_secondary_action: ['app', 'element_index'],
+  scroll: ['app', 'direction'],
+  drag: ['app'],
+  type_text: ['app', 'text'],
+  press_key: ['app', 'key'],
+  set_value: ['app', 'element_index', 'value'],
+};
+
 export function computerUseTool(options: ComputerUseToolOptions = {}): AgentTool {
   return {
     def: toolDef('computer_use', 'Desktop GUI control (macOS/Linux/Windows). AUTO-USE whenever the task needs to open/switch/operate a desktop app, click UI elements, type into non-browser windows, scroll/drag, or inspect desktop state — do not wait for explicit user instruction; prefer this over shell coordinate guessing. Actions: list_apps / get_app_state / click / perform_secondary_action / scroll / drag / type_text / press_key / set_value / doctor.', {
@@ -69,7 +82,11 @@ export function computerUseTool(options: ComputerUseToolOptions = {}): AgentTool
         args: {
           type: 'object',
           description:
-            '动作参数，如 {app, element_index, text, key, x, y, dx, dy, ...}；get_app_state 可传 max_tree_nodes/max_tree_depth/text_limit 控制输出大小',
+            '按 action 传对应字段：list_apps 无参数；get_app_state: {app}（可选 max_tree_nodes/max_tree_depth/text_limit 控制输出）；' +
+            'click: {app, element_index}（或用 {app, x, y} 坐标）；perform_secondary_action: {app, element_index}；' +
+            'scroll: {app, direction: up|down|left|right}；drag: {app, 起点终点元素或坐标}；' +
+            'type_text: {app, text}；press_key: {app, key}；' +
+            'set_value: {app, element_index, value}（三者必填）。element_index 必须来自最近一次 get_app_state 的 UI 树。',
         },
         calls: {
           type: 'array',
@@ -98,6 +115,25 @@ export function computerUseTool(options: ComputerUseToolOptions = {}): AgentTool
           result: 'computer_use: missing `action`（list_apps/get_app_state/click/perform_secondary_action/scroll/drag/type_text/press_key/set_value/doctor）',
           is_error: true,
         };
+      }
+      // 必填参数校验：缺参直接给出可操作的补参提示，比 CLI 英文报错对模型更友好
+      const required = REQUIRED_ARGS[action];
+      if (required) {
+        const argObj = (args ?? {}) as Record<string, unknown>;
+        const missing = required.filter((k) => argObj[k] === undefined || argObj[k] === null || argObj[k] === '');
+        if (missing.length > 0) {
+          return {
+            result:
+              `computer_use(${action}) 缺少必填参数: ${missing.join(', ')}。` +
+              '补参提示：app 用 list_apps 返回的应用名；element_index 必须来自最近一次 get_app_state 的 UI 树；' +
+              (action === 'set_value' ? 'value 是要设置到元素的值。' : '') +
+              (action === 'type_text' ? 'text 是要输入的完整文本。' : '') +
+              (action === 'press_key' ? 'key 是按键名（如 enter/tab/escape/command+w）。' : '') +
+              (action === 'scroll' ? 'direction 是滚动方向 up/down/left/right。' : '') +
+              ' 请补齐后重试。',
+            is_error: true,
+          };
+        }
       }
       let bin: string;
       try {
