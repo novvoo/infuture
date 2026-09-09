@@ -228,23 +228,140 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const pendingTextRef = useRef('');
   const currentSessionRef = useRef<string | null>(null);
   const fsPathRef = useRef('');
+  // 会话级现场缓存：切走/切回会话时保留各自的实时消息、运行日志与运行状态，
+  // 避免"任务运行中切走再切回"时未持久化的 SSE 增量丢失、响应不再显示。
+  const msgCacheRef = useRef(new Map<string, Array<{ role: string; text: string; reasoning?: string }>>());
+  const logCacheRef = useRef(new Map<string, RunLogItem[]>());
+  const busyCacheRef = useRef(new Map<string, boolean>());
+  const runIdCacheRef = useRef(new Map<string, string | null>());
+  /** 已用服务端历史初始化的会话（避免事件与历史拉取竞态覆盖）。 */
+  const loadedCacheRef = useRef(new Set<string>());
+  /** 缓存未就绪期间到达的 run 事件，按会话暂存，历史基线就绪后按序重放。 */
+  const pendingEventsRef = useRef(new Map<string, RunEvent[]>());
+
+  /** 在指定会话的缓存上追加/更新消息，返回新数组。 */
+  const bumpMessages = useCallback((sid: string, updater: (prev: Array<{ role: string; text: string; reasoning?: string }>) => Array<{ role: string; text: string; reasoning?: string }>) => {
+    const cur = msgCacheRef.current.get(sid) ?? [];
+    const next = updater(cur);
+    msgCacheRef.current.set(sid, next);
+    return next;
+  }, []);
+
+  /** 在指定会话的缓存上追加日志，返回新数组。 */
+  const bumpRunLog = useCallback((sid: string, updater: (prev: RunLogItem[]) => RunLogItem[]) => {
+    const cur = logCacheRef.current.get(sid) ?? [];
+    const next = updater(cur);
+    logCacheRef.current.set(sid, next);
+    return next;
+  }, []);
+
+  /** 把当前会话状态同步为缓存内容（切回会话时恢复现场）。 */
+  const syncFromCache = useCallback((sid: string) => {
+    setMessages(msgCacheRef.current.get(sid) ?? []);
+    setRunLog(logCacheRef.current.get(sid) ?? []);
+    const b = busyCacheRef.current.get(sid) ?? false;
+    setBusy(b);
+    const rid = runIdCacheRef.current.get(sid) ?? null;
+    runIdRef.current = rid;
+    setRunId(rid);
+  }, []);
+
+  /** 把 run 事件应用到会话消息缓存（reasoning/text 增量合并），返回新数组。 */
+  const applyEventToMessages = useCallback(
+    (sid: string, ev: RunEvent): Array<{ role: string; text: string; reasoning?: string }> => {
+      if (ev.type === 'reasoning_delta') {
+        return bumpMessages(sid, (prev) => {
+          const last = prev[prev.length - 1];
+          if (last && last.role === 'assistant') {
+            const next = [...prev];
+            next[next.length - 1] = { ...last, reasoning: (last.reasoning ?? '') + ev.text };
+            return next;
+          }
+          return [...prev, { role: 'assistant', text: '', reasoning: ev.text }];
+        });
+      }
+      if (ev.type === 'text_delta') {
+        if (!ev.text) return msgCacheRef.current.get(sid) ?? [];
+        return bumpMessages(sid, (prev) => {
+          const last = prev[prev.length - 1];
+          if (last && last.role === 'assistant') {
+            const next = [...prev];
+            next[next.length - 1] = { ...last, text: last.text + ev.text };
+            return next;
+          }
+          return [...prev, { role: 'assistant', text: ev.text }];
+        });
+      }
+      return msgCacheRef.current.get(sid) ?? [];
+    },
+    [bumpMessages],
+  );
+
+  /** 把 run 事件应用到会话日志缓存（工具/usage/error），返回新数组。 */
+  const applyEventToLog = useCallback(
+    (sid: string, ev: RunEvent): RunLogItem[] => {
+      switch (ev.type) {
+        case 'tool_call':
+          return bumpRunLog(sid, (prev) => [
+            ...prev,
+            {
+              kind: 'tool_call',
+              label: `${ev.name}${editModeLabel(ev.name, ev.args) ? '·' + editModeLabel(ev.name, ev.args) : ''}`,
+              detail: JSON.stringify(ev.args).slice(0, 400),
+              coding: isCodingTool(ev.name),
+              ts: Date.now(),
+            },
+          ]);
+        case 'tool_result':
+          return bumpRunLog(sid, (prev) => [
+            ...prev,
+            { kind: 'tool_result', label: ev.name, detail: `${ev.costMs !== undefined ? `(${ev.costMs}ms) ` : ''}${ev.result.slice(0, 500)}`, isError: ev.isError, coding: isCodingTool(ev.name), ts: Date.now() },
+          ]);
+        case 'usage':
+          return bumpRunLog(sid, (prev) => [
+            ...prev,
+            { kind: 'usage', label: 'usage', detail: `in=${ev.usage.prompt_tokens} out=${ev.usage.completion_tokens}`, ts: Date.now() },
+          ]);
+        case 'tool_update':
+          return bumpRunLog(sid, (prev) => [
+            ...prev,
+            { kind: 'info', label: `⚡ ${ev.tool}`, detail: ev.partial.slice(0, 300), coding: true, ts: Date.now() },
+          ]);
+        case 'error':
+          return bumpRunLog(sid, (prev) => [
+            ...prev,
+            { kind: 'error', label: 'error', detail: ev.message, isError: true, ts: Date.now() },
+          ]);
+        default:
+          return logCacheRef.current.get(sid) ?? [];
+      }
+    },
+    [bumpRunLog],
+  );
 
   const loadMessages = useCallback(async (sessionId: string) => {
     const rpc = rpcRef.current;
     if (!rpc) return;
     const msgs = (await rpc.call<Array<{ role: string; content: unknown[] }>>('session.messages', { id: sessionId })) ?? [];
-    setMessages(
-      msgs.map((m) => ({
-        role: m.role,
-        text: m.content
-          .map((raw: unknown) => {
-            const b = raw as { type?: string; text?: string; content?: string };
-            return b.type === 'text' ? b.text ?? '' : b.type === 'tool_result' ? b.content ?? '' : '';
-          })
-          .join(''),
-      })),
-    );
-  }, []);
+    const base = msgs.map((m) => ({
+      role: m.role,
+      text: m.content
+        .map((raw: unknown) => {
+          const b = raw as { type?: string; text?: string; content?: string };
+          return b.type === 'text' ? b.text ?? '' : b.type === 'tool_result' ? b.content ?? '' : '';
+        })
+        .join(''),
+    }));
+    msgCacheRef.current.set(sessionId, base);
+    loadedCacheRef.current.add(sessionId);
+    // 重放缓存就绪前暂存的事件（防止历史基线覆盖时丢失进行中增量）
+    const pending = pendingEventsRef.current.get(sessionId) ?? [];
+    if (pending.length > 0) {
+      pendingEventsRef.current.delete(sessionId);
+      for (const ev of pending) applyEventToMessages(sessionId, ev);
+    }
+    if (currentSessionRef.current === sessionId) syncFromCache(sessionId);
+  }, [applyEventToMessages, syncFromCache]);
 
   const loadWorkers = useCallback(async (goalId?: string) => {
     const rpc = rpcRef.current;
@@ -402,95 +519,44 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
       if (n.method !== 'event') return;
       const { sessionId, event: ev } = n.params as { sessionId?: string; event: RunEvent };
-      // 会话隔离：只处理属于当前查看会话的 run 事件，避免新会话串进正在运行的旧会话响应
-      if (sessionId && sessionId !== currentSessionRef.current) return;
-      // 跟踪当前 runId：运行中记录，结束/取消/出错时清空
+      const sid = sessionId ?? currentSessionRef.current ?? '';
+      if (!sid) return;
+      // 历史基线未就绪（如刷新后 ws 重连、事件先于 session.messages 返回）：暂存事件，
+      // 由 loadMessages 就绪后按序重放——不做会话丢弃，切回时也能补上错过的增量。
+      if (!loadedCacheRef.current.has(sid)) {
+        const list = pendingEventsRef.current.get(sid) ?? [];
+        list.push(ev);
+        pendingEventsRef.current.set(sid, list);
+        if (sid === currentSessionRef.current) void loadMessages(sid);
+        return;
+      }
+      // 会话隔离改为"缓存累积"：事件始终写入所属会话缓存（当前会话实时渲染，
+      // 非当前会话也累积，切回时恢复显示——不再因切走而丢失响应）。
+      const isCurrent = sid === currentSessionRef.current;
+      // 跟踪 runId / busy（按会话缓存，切回时恢复）
       if (ev.runId) {
-        runIdRef.current = ev.runId;
-        setRunId(ev.runId);
+        runIdCacheRef.current.set(sid, ev.runId);
+        if (isCurrent) {
+          runIdRef.current = ev.runId;
+          setRunId(ev.runId);
+        }
       }
       if (ev.type === 'complete' || ev.type === 'cancelled' || ev.type === 'error') {
-        runIdRef.current = null;
-        setRunId(null);
-      }
-      switch (ev.type) {
-        case 'reasoning_delta':
-          // 实时显示思考过程
-          setMessages((prev) => {
-            const last = prev[prev.length - 1];
-            if (last && last.role === 'assistant') {
-              const next = [...prev];
-              next[next.length - 1] = { ...last, reasoning: (last.reasoning ?? '') + ev.text };
-              return next;
-            }
-            return [...prev, { role: 'assistant', text: '', reasoning: ev.text }];
-          });
-          setBusy(true);
-          break;
-        case 'text_delta':
-          // 空 delta 不创建/不污染消息（防止残留空 assistant 气泡）
-          if (!ev.text) break;
-          setMessages((prev) => {
-            const last = prev[prev.length - 1];
-            if (last && last.role === 'assistant') {
-              const next = [...prev];
-              next[next.length - 1] = { ...last, text: last.text + ev.text };
-              return next;
-            }
-            return [...prev, { role: 'assistant', text: ev.text }];
-          });
-          setBusy(true);
-          void pendingTextRef;
-          break;
-        case 'tool_call':
-          setRunLog((prev) => [
-            ...prev,
-            {
-              kind: 'tool_call',
-              label: `${ev.name}${editModeLabel(ev.name, ev.args) ? '·' + editModeLabel(ev.name, ev.args) : ''}`,
-              detail: JSON.stringify(ev.args).slice(0, 400),
-              coding: isCodingTool(ev.name),
-              ts: Date.now(),
-            },
-          ]);
-          break;
-        case 'tool_result':
-          setRunLog((prev) => [
-            ...prev,
-            { kind: 'tool_result', label: ev.name, detail: `${ev.costMs !== undefined ? `(${ev.costMs}ms) ` : ''}${ev.result.slice(0, 500)}`, isError: ev.isError, coding: isCodingTool(ev.name), ts: Date.now() },
-          ]);
-          break;
-        case 'usage':
-          setRunLog((prev) => [
-            ...prev,
-            {
-              kind: 'usage',
-              label: 'usage',
-              detail: `in=${ev.usage.prompt_tokens} out=${ev.usage.completion_tokens}`,
-              ts: Date.now(),
-            },
-          ]);
-          break;
-        case 'tool_update':
-          setRunLog((prev) => [
-            ...prev,
-            { kind: 'info', label: `⚡ ${ev.tool}`, detail: ev.partial.slice(0, 300), coding: true, ts: Date.now() },
-          ]);
-          break;
-        case 'complete':
-        case 'cancelled':
+        runIdCacheRef.current.set(sid, null);
+        busyCacheRef.current.set(sid, false);
+        if (isCurrent) {
+          runIdRef.current = null;
+          setRunId(null);
           setBusy(false);
-          break;
-        case 'error':
-          setBusy(false);
-          setRunLog((prev) => [
-            ...prev,
-            { kind: 'error', label: 'error', detail: ev.message, isError: true, ts: Date.now() },
-          ]);
-          break;
-        default:
-          break;
+        }
+      } else if (ev.type === 'reasoning_delta' || ev.type === 'text_delta') {
+        busyCacheRef.current.set(sid, true);
+        if (isCurrent) setBusy(true);
       }
+      const nextMsgs = applyEventToMessages(sid, ev);
+      if (isCurrent) setMessages(nextMsgs);
+      const nextLog = applyEventToLog(sid, ev);
+      if (isCurrent) setRunLog(nextLog);
     });
     return off;
   }, []);
@@ -499,33 +565,40 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const rpc = rpcRef.current;
     const sessionId = currentSessionRef.current;
     if (!rpc || !sessionId) return;
-    setMessages((prev) => [...prev, { role: 'user', text }]);
+    const msgs = bumpMessages(sessionId, (prev) => [...prev, { role: 'user', text }]);
+    setMessages(msgs);
+    busyCacheRef.current.set(sessionId, true);
     setBusy(true);
     try {
       await rpc.call('session.send', { sessionId, prompt: text });
     } catch (err) {
+      busyCacheRef.current.set(sessionId, false);
       setBusy(false);
-      setRunLog((prev) => [
+      const log = bumpRunLog(sessionId, (prev) => [
         ...prev,
         { kind: 'error', label: 'error', detail: String(err), isError: true, ts: Date.now() },
       ]);
+      setRunLog(log);
     }
-  }, []);
+  }, [bumpMessages, bumpRunLog]);
 
   /** 停止当前运行：发给后端 session.stop，运行环会发 cancelled 事件并复位 busy。 */
   const stop = useCallback(async () => {
     const rpc = rpcRef.current;
     const rid = runIdRef.current;
+    const sessionId = currentSessionRef.current;
     if (!rpc || !rid) return;
     try {
       await rpc.call('session.stop', { runId: rid });
     } catch (err) {
-      setRunLog((prev) => [
+      if (!sessionId) return;
+      const log = bumpRunLog(sessionId, (prev) => [
         ...prev,
         { kind: 'error', label: 'error', detail: String(err), isError: true, ts: Date.now() },
       ]);
+      setRunLog(log);
     }
-  }, []);
+  }, [bumpRunLog]);
 
   const newSession = useCallback(async () => {
     const rpc = rpcRef.current;
@@ -538,6 +611,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       ...prev,
     ]);
     setCurrentSessionId(created.id);
+    // 新会话缓存即空基线
+    msgCacheRef.current.set(created.id, []);
+    logCacheRef.current.set(created.id, []);
+    busyCacheRef.current.set(created.id, false);
+    runIdCacheRef.current.set(created.id, null);
+    loadedCacheRef.current.add(created.id);
     setMessages([]);
     setRunLog([]);
     // 复位运行状态，避免继承其他会话的运行中标记
@@ -551,14 +630,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       currentSessionRef.current = id;
       currentIdRef.current = id;
       setCurrentSessionId(id);
-      setRunLog([]);
-      // 复位运行状态：切换会话后只响应当前会话的 run 事件
-      setBusy(false);
-      setRunId(null);
-      runIdRef.current = null;
-      await loadMessages(id);
+      if (loadedCacheRef.current.has(id)) {
+        // 已有现场缓存（含切走期间的增量）：直接恢复，不重新拉取覆盖
+        syncFromCache(id);
+      } else {
+        setMessages([]);
+        setRunLog([]);
+        setBusy(false);
+        setRunId(null);
+        runIdRef.current = null;
+        await loadMessages(id);
+      }
     },
-    [loadMessages],
+    [loadMessages, syncFromCache],
   );
 
   const setModel = useCallback(async (id: string) => {
@@ -640,6 +724,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const rpc = rpcRef.current;
     if (!rpc) return;
     await rpc.call('session.delete', { id });
+    // 清理该会话的现场缓存
+    msgCacheRef.current.delete(id);
+    logCacheRef.current.delete(id);
+    busyCacheRef.current.delete(id);
+    runIdCacheRef.current.delete(id);
+    loadedCacheRef.current.delete(id);
+    pendingEventsRef.current.delete(id);
     const list = (await rpc.call<SessionInfo[]>('session.list')) ?? [];
     setSessions(list);
     if (currentSessionRef.current !== id) return;
@@ -648,19 +739,34 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       currentSessionRef.current = next;
       currentIdRef.current = next;
       setCurrentSessionId(next);
-      setMessages([]);
-      setRunLog([]);
-      await loadMessages(next);
+      if (loadedCacheRef.current.has(next)) {
+        syncFromCache(next);
+      } else {
+        setMessages([]);
+        setRunLog([]);
+        setBusy(false);
+        setRunId(null);
+        runIdRef.current = null;
+        await loadMessages(next);
+      }
     } else {
       const created = await rpc.call<{ id: string }>('session.create', { name: '新会话' });
       currentSessionRef.current = created.id;
       currentIdRef.current = created.id;
       setCurrentSessionId(created.id);
       setSessions((prev) => [{ id: created.id, name: '新会话', model: '', createdAt: Date.now(), updatedAt: Date.now() }, ...prev]);
+      msgCacheRef.current.set(created.id, []);
+      logCacheRef.current.set(created.id, []);
+      busyCacheRef.current.set(created.id, false);
+      runIdCacheRef.current.set(created.id, null);
+      loadedCacheRef.current.add(created.id);
       setMessages([]);
       setRunLog([]);
+      setBusy(false);
+      setRunId(null);
+      runIdRef.current = null;
     }
-  }, [loadMessages]);
+  }, [loadMessages, syncFromCache]);
 
   const renameSession = useCallback(async (id: string, name: string) => {
     const rpc = rpcRef.current;
