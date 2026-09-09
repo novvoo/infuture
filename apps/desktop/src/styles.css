@@ -183,16 +183,67 @@ body {
   border-top: 1px solid var(--border); padding: 14px 20px 18px;
   background: var(--bg-raised);
 }
-.composer textarea {
-  width: 100%; background: var(--bg); border: 1px solid var(--border);
-  border-radius: 10px; color: var(--text); font-family: var(--font);
-  font-size: 14px; padding: 12px 14px; resize: none; outline: none;
-  min-height: 44px;
-  transition: border-color var(--transition);
+/* 一体化输入条：整体边框包含 附件预览 + textarea + 工具条（模型/思考/发送） */
+.composer-box {
+  position: relative;
+  border: 1px solid var(--border); border-radius: 12px;
+  background: var(--bg);
+  transition: border-color var(--transition), box-shadow var(--transition);
 }
-.composer textarea:focus { border-color: var(--accent); }
-.composer .row { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; }
-.composer .hint { font-size: 11px; color: var(--text-dim); }
+.composer-box:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+.composer-box textarea {
+  width: 100%; background: transparent; border: none; color: var(--text);
+  font-family: var(--font); font-size: 15px; padding: 14px 16px; resize: none;
+  outline: none; min-height: 48px;
+}
+.composer-box textarea::placeholder {
+  color: var(--text-dim);
+  font-size: 15px;
+  opacity: 0.9;
+}
+/* 附件预览行 */
+.attach-row {
+  display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 12px 0;
+}
+.attach-chip {
+  display: flex; align-items: center; gap: 6px; padding: 4px 8px 4px 4px;
+  background: var(--bg-raised, #14161d); border: 1px solid var(--border);
+  border-radius: 8px; font-size: 12px; max-width: 220px;
+}
+.attach-thumb {
+  width: 34px; height: 34px; object-fit: cover; border-radius: 6px;
+}
+.attach-ico { font-size: 18px; padding: 4px 6px; }
+.attach-name {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0.85;
+}
+.attach-x {
+  border: none; background: none; color: var(--text-dim); cursor: pointer;
+  font-size: 15px; line-height: 1; padding: 0 2px;
+}
+.attach-x:hover { color: var(--danger, #ff6b6b); }
+/* 工具条：附件 | 模型/思考 | 发送 */
+.composer-toolbar {
+  display: flex; align-items: center; gap: 10px; padding: 6px 10px 10px;
+}
+.composer-models {
+  display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0;
+  /* 注意：不能设 overflow-x（任何 overflow 都会把向上弹出的 model-list 裁剪掉） */
+}
+.composer-send { margin-left: auto; }
+
+/* 模型/思考上拉框：宽度自适应窗口，避免窄视口溢出被裁 */
+.model-menu { position: relative; }
+.model-list {
+  position: absolute; right: 0; bottom: calc(100% + 6px);
+  width: 420px; max-width: min(420px, calc(100vw - 32px));
+  max-height: 320px; overflow: auto;
+  background: var(--bg-float); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: var(--shadow-pop); z-index: 60;
+}
 
 /* ===== 文件管理面板 ===== */
 .files-panel { flex: 1; display: flex; flex-direction: column; min-height: 0; background: var(--bg); }
@@ -390,13 +441,7 @@ body {
 .capsule-dot.busy { background: var(--yellow); animation: capsule-pulse 1.2s ease-in-out infinite; }
 @keyframes capsule-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
 
-/* 模型菜单 */
-.model-menu { position: relative; }
-.model-list {
-  position: absolute; right: 0; bottom: calc(100% + 6px); width: 420px; max-height: 320px; overflow: auto;
-  background: var(--bg-float); border: 1px solid var(--border); border-radius: 10px;
-  box-shadow: var(--shadow-pop); z-index: 40;
-}
+/* 模型菜单（上拉框定义见上方 .composer-models 附近的 .model-list） */
 .model-option { padding: 10px 14px; cursor: pointer; display: flex; justify-content: space-between; }
 .model-option:hover { background: var(--bg-hover); }
 .model-option.active { background: var(--accent-soft); }

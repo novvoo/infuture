@@ -117,6 +117,9 @@ export class ServerSession {
         const outcome = await this.engine.run(session, String(p.prompt), {
           busyPolicy: typeof p.busyPolicy === 'string' ? (p.busyPolicy as never) : undefined,
           onEvent: this.attachRunEvents(sessionId),
+          attachments: Array.isArray(p.attachments)
+            ? (p.attachments as Array<{ kind: 'image' | 'file'; name: string; dataUrl?: string; content?: string }>)
+            : undefined,
         });
         return outcome;
       }
@@ -162,6 +165,7 @@ export class ServerSession {
           contextWindow: m.contextWindow,
           maxTokens: m.maxTokens,
           reasoning: m.reasoning,
+          input_types: m.input_types ?? [],
         }));
       case METHODS.ModelSelect: {
         const id = String(p.id);
@@ -272,8 +276,13 @@ export class ServerSession {
           contextWindow?: number;
           maxTokens?: number;
           reasoning?: boolean;
+          input_types?: string[];
         };
         if (!m.id) throw new Error('model id required');
+        const inputTypes =
+          Array.isArray(m.input_types) && m.input_types.length > 0
+            ? m.input_types
+            : ['text'];
         const model = {
           id: m.id,
           name: m.name ?? m.id,
@@ -283,6 +292,7 @@ export class ServerSession {
           contextWindow: m.contextWindow ?? 128000,
           maxTokens: m.maxTokens ?? 4096,
           reasoning: m.reasoning ?? false,
+          input_types: inputTypes,
           hide: false,
         };
         this.engine.models.add(model);
@@ -296,6 +306,36 @@ export class ServerSession {
         await this.engine.removeCustomModelFromFile(id);
         return { ok: true, removed, id };
       }
+      case METHODS.LocalStatus:
+        return this.engine.localModels.status();
+      case METHODS.LocalDownload: {
+        const repo = String((p as { repo?: string })?.repo ?? '');
+        if (!repo) throw new Error('repo required');
+        return this.engine.localModels.download(repo);
+      }
+      case METHODS.LocalStart: {
+        const { modelDir, port } = (p ?? {}) as { modelDir?: string; port?: number };
+        return this.engine.localModels.start(modelDir, port);
+      }
+      case METHODS.LocalStop:
+        return this.engine.localModels.stop();
+      case METHODS.LocalRefresh:
+        return this.engine.localModels.refresh();
+      case METHODS.LocalSettings: {
+        const patch = (p ?? {}) as { modelRoot?: string; port?: number; autoRegister?: boolean };
+        return this.engine.localModels.setSettings(patch);
+      }
+      case METHODS.LocalLog: {
+        const id = String((p as { id?: string })?.id ?? '');
+        return { lines: this.engine.localModels.getDownloadLog(id) };
+      }
+      case METHODS.LocalDeactivate: {
+        const id = String((p as { id?: string })?.id ?? '');
+        if (!id) throw new Error('model id required');
+        return this.engine.localModels.deactivate(id);
+      }
+      case METHODS.LocalTest:
+        return this.engine.localModels.test();
       case METHODS.SettingsSet: {
         const patch = (p ?? {}) as Record<string, unknown>;
         const allowed = ['defaultModel', 'sandboxTier', 'codingToolsApproval', 'networkToolsApproval', 'generalToolsApproval', 'searchProvider', 'maxTurns', 'thinkingBudget', 'thinkingLevel', 'workspaceDir'];

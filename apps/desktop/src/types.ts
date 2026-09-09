@@ -2,7 +2,29 @@
 import type { AgentMessage, Usage } from '@infuture/types';
 
 /** 活动导航视图（聊天 / 文件 / 目标（含状态总览+详情） / 设置）。 */
-export type RailView = 'chat' | 'files' | 'workers' | 'settings';
+export type RailView = 'chat' | 'files' | 'workers' | 'settings' | 'local';
+
+/** 本地模型条目（下载/启动/自动注册三块功能共用）。 */
+export interface LocalModelEntry {
+  id: string;
+  dir: string;
+  installed: boolean;
+  repo?: string;
+  label?: string;
+  registered: boolean;
+}
+
+export interface LocalModelStatus {
+  running: boolean;
+  port: number;
+  modelRoot: string;
+  autoRegister: boolean;
+  models: LocalModelEntry[];
+  downloading: string[];
+  serving: string[];
+  registeredIds: string[];
+  logTail: string[];
+}
 
 export interface SessionInfo {
   id: string;
@@ -22,6 +44,12 @@ export interface ModelInfo {
   contextWindow: number;
   maxTokens: number;
   reasoning: boolean;
+  input_types?: string[];
+}
+
+/** 模型是否支持视觉输入（多模态）。 */
+export function isVisionModel(m: ModelInfo): boolean {
+  return (m.input_types ?? []).includes('image');
 }
 
 export type RunEvent =

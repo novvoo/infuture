@@ -13,6 +13,7 @@ export * from './tools/fs.js';
 export * from './tools/shell.js';
 export * from './workspace/files.js';
 export * from './models/catalog.js';
+export * from './local/local-models.js';
 export * from './config/auth.js';
 export * from './config/settings.js';
 export * from './skills/index.js';

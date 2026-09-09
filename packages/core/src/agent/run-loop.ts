@@ -581,10 +581,18 @@ export async function inloop(input: RunLoopInput): Promise<RunLoopResult> {
       } else {
         const prepared = config.hooks?.prepareToolCall ? config.hooks.prepareToolCall(call.name, call.args) : call.args;
         const t0 = Date.now();
-        const res = await registry.execute(call.name, prepared, { signal, cwd });
+        try {
+          const res = await registry.execute(call.name, prepared, { signal, cwd });
+          resultText = res.result;
+          isError = res.is_error;
+        } catch (err) {
+          // 工具执行异常（崩溃/超时/内部错误）不得杀死整个 run：
+          // 转成 is_error 工具结果回填给模型，模型可据错误自我修正后继续。
+          console.error(`[infuture] tool ${call.name} 执行异常:`, err instanceof Error ? `${err.message}\n${err.stack}` : String(err));
+          resultText = `工具 ${call.name} 执行异常: ${err instanceof Error ? err.message : String(err)}`;
+          isError = true;
+        }
         costMs = Date.now() - t0;
-        resultText = res.result;
-        isError = res.is_error;
         if (config.hooks?.finalizeToolCall) {
           const fin = config.hooks.finalizeToolCall(call.name, resultText, isError ? new Error(resultText) : null);
           if (fin) {

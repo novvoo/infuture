@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useAppState, useAppApi } from '../state';
 import { LLMSetupModal } from './LLMSetupModal';
 
@@ -8,19 +8,28 @@ export function ModelMenu() {
   const { setModel, refreshModels } = useAppApi();
   const [open, setOpen] = useState(false);
   const [llmOpen, setLlmOpen] = useState(false);
+  const current = models.find((m) => m.id === currentModel);
+
+  // 下拉打开期间轮询模型列表：本地模型服务停止/启动、外部 CLI 修改等都会同步到下拉。
+  useEffect(() => {
+    if (!open) return;
+    void refreshModels();
+    const t = setInterval(() => void refreshModels(), 2500);
+    return () => clearInterval(t);
+  }, [open, refreshModels]);
 
   return (
     <div className="model-menu" style={{ position: 'relative', display: 'inline-block' }}>
       <button
         className="btn"
-        style={{ fontSize: 12 }}
+        style={{ fontSize: 12, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
         onClick={() => {
           // 打开时重新拉取，拾取外部（CLI/文件）新增或修改的模型配置
           void refreshModels();
           setOpen((o) => !o);
         }}
       >
-        {currentModel || '未配置模型'} ▾
+        {current?.name || currentModel || '未配置模型'} ▾
       </button>
       {open && (
         <div className="model-list">
@@ -53,7 +62,12 @@ export function ModelMenu() {
                     setOpen(false);
                   }}
                 >
-                  <span className="n">{m.id}</span>
+                  <span className="n">
+                    {m.name || m.id}
+                    {(m.input_types ?? []).includes('image') && (
+                      <span title="多模态（支持图片输入）" style={{ marginLeft: 6, opacity: 0.9 }}>📷</span>
+                    )}
+                  </span>
                   <span className="d">
                     {m.provider} · {m.contextWindow.toLocaleString()}
                   </span>

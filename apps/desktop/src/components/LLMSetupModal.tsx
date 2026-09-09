@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useAppState, useAppApi } from '../state';
-import type { ModelInfo } from '../types';
+import { type ModelInfo, isVisionModel } from '../types';
 
 const API_OPTIONS = [
   { value: 'openai-completions', label: 'OpenAI Chat Completions' },
@@ -21,6 +21,7 @@ function ModelCard({ model }: { model: ModelInfo }) {
   const [key, setKey] = useState('');
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [vision, setVision] = useState(isVisionModel(model));
   const hasKey = !!auth?.[model.provider]?.hasKey;
 
   const save = async () => {
@@ -37,6 +38,7 @@ function ModelCard({ model }: { model: ModelInfo }) {
         contextWindow: model.contextWindow,
         maxTokens: model.maxTokens ?? 4096,
         reasoning: model.reasoning,
+        input_types: vision ? ['text', 'image'] : ['text'],
       });
       if (key.trim()) await saveAuth(model.provider, key.trim());
       setSaved(true);
@@ -52,6 +54,11 @@ function ModelCard({ model }: { model: ModelInfo }) {
         <span style={{ fontSize: 13, fontWeight: 600 }}>
           {model.name || model.id}
           <span style={{ color: 'var(--text-dim)', fontWeight: 400, marginLeft: 6, fontFamily: 'var(--mono)' }}>{model.provider}</span>
+          {isVisionModel(model) ? (
+            <span className="badge ok" style={{ marginLeft: 8 }} title="支持图片输入（多模态）">📷 多模态</span>
+          ) : (
+            <span className="badge warn" style={{ marginLeft: 8 }} title="仅文本输入">文本</span>
+          )}
         </span>
         <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
           <span className={hasKey ? 'badge ok' : 'badge warn'}>{hasKey ? 'Key 已配置' : 'Key 未配置'}</span>
@@ -63,6 +70,10 @@ function ModelCard({ model }: { model: ModelInfo }) {
         <input className="input" placeholder="Base URL" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} />
         <input className="input" type="password" placeholder={hasKey ? '新 Key（留空不改）' : 'API Key'} value={key} onChange={(e) => setKey(e.target.value)} />
       </div>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-dim)', marginTop: 8, cursor: 'pointer' }}>
+        <input type="checkbox" checked={vision} onChange={(e) => setVision(e.target.checked)} />
+        多模态（支持图片输入，如视觉模型）
+      </label>
       <div className="btn-row" style={{ marginTop: 8 }}>
         <button className="btn sm primary" disabled={busy} onClick={() => void save()}>{saved ? '已保存 ✓' : '保存'}</button>
       </div>
@@ -83,6 +94,7 @@ export function LLMSetupModal({ onClose }: LLMSetupModalProps) {
     contextWindow: 32768,
     maxTokens: 4096,
     reasoning: false,
+    vision: false,
   });
   const [err, setErr] = useState<string | null>(null);
 
@@ -100,7 +112,10 @@ export function LLMSetupModal({ onClose }: LLMSetupModalProps) {
       setErr('provider 必填（用于对应 API Key 的保存名）');
       return;
     }
-    await addModel(custom);
+    await addModel({
+      ...custom,
+      input_types: custom.vision ? ['text', 'image'] : ['text'],
+    });
     setCustom({ ...custom, id: '', name: '' });
   };
 
@@ -144,6 +159,10 @@ export function LLMSetupModal({ onClose }: LLMSetupModalProps) {
           </div>
         </div>
         {err && <div style={{ fontSize: 12, color: 'var(--red)', marginTop: 8 }}>{err}</div>}
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-dim)', marginTop: 10, cursor: 'pointer' }}>
+          <input type="checkbox" checked={custom.vision} onChange={(e) => setCustom({ ...custom, vision: e.target.checked })} />
+          多模态（支持图片输入，如视觉模型；开启后附件图片会直接发给该模型）
+        </label>
         <div className="btn-row">
           <button className="btn primary" onClick={() => void submitCustom()}>添加模型</button>
         </div>

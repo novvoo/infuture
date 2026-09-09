@@ -145,12 +145,24 @@ async function main() {
     }
   });
 
-  process.on('SIGINT', () => {
+  let shuttingDown = false;
+  async function shutdown(code: number): Promise<void> {
+    if (shuttingDown) return;
+    shuttingDown = true;
     wss.close();
     httpServer.close();
-    engine.dispose();
-    process.exit(0);
-  });
+    // 兜底：清理超时也强制退出，避免 stop() 的异步清理卡住进程
+    const timer = setTimeout(() => process.exit(code), 3000);
+    timer.unref();
+    try {
+      await engine.dispose();
+    } finally {
+      process.exit(code);
+    }
+  }
+  process.on('SIGINT', () => void shutdown(0));
+  // desktop-dev.mjs 停止时对整个进程组发 SIGTERM；单独 kill 本进程也走同一清理路径
+  process.on('SIGTERM', () => void shutdown(0));
 }
 
 void main();

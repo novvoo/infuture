@@ -19,6 +19,8 @@ import { shellTool } from './tools/shell.js';
 import { computerUseTool } from './tools/computer-use.js';
 import { spawnWorkersTool, listWorkersTool, type WorkerSpawner, type WorkerLister } from './tools/worker.js';
 import { Registry, getDefaultModel } from './models/catalog.js';
+import { LocalModelManager } from './local/local-models.js';
+import { imageBlock, textBlock } from '@infuture/types';
 import { AuthStore } from './config/auth.js';
 import { loadSettings, saveSettings, type Settings } from './config/settings.js';
 import { WorkspaceFiles } from './workspace/files.js';
@@ -100,6 +102,8 @@ export class Engine {
   readonly approval: DefaultApprovalGate;
   readonly models: Registry;
   readonly auth: AuthStore;
+  /** 本地模型管理（下载 / mlx_lm 服务启动 / 自动注册到模型菜单）。 */
+  readonly localModels: LocalModelManager;
   /** coding tools 服务（bun 进程，inloop 直调编程工具）。 */
   readonly coding: CodingToolsClient;
   /** 工作台文件管理服务（UI RPC 用）。 */
@@ -143,6 +147,19 @@ export class Engine {
     this.workspace = process.cwd();
     this.files = new WorkspaceFiles();
     this.tools = this.buildToolRegistry();
+    this.localModels = new LocalModelManager(
+      this.configDir,
+      async (m) => {
+        const model = m as Model;
+        this.models.add(model);
+        await this.addCustomModelToFile(model);
+      },
+      async (id) => {
+        this.models.remove(id);
+        await this.removeCustomModelFromFile(id);
+      },
+    );
+    void this.localModels.init();
   }
 
   private buildToolRegistry(): ToolRegistry {
@@ -469,7 +486,15 @@ export class Engine {
   async run(
     sessionOrId: Session | string,
     prompt: string,
-    options: { busyPolicy?: BusyPolicy; onEvent?: RunEventCallback; model?: string; thinkingBudget?: number; thinkingLevel?: string } = {},
+    options: {
+      busyPolicy?: BusyPolicy;
+      onEvent?: RunEventCallback;
+      model?: string;
+      thinkingBudget?: number;
+      thinkingLevel?: string;
+      /** 消息附件：图片（dataUrl，base64 data URL）或文本文件（content 已由前端读出）。 */
+      attachments?: Array<{ kind: 'image' | 'file'; name: string; dataUrl?: string; content?: string }>;
+    } = {},
   ): Promise<RunOutcome> {
     const session = typeof sessionOrId === 'string' ? await this.sessions.load(sessionOrId) : sessionOrId;
     if (!session) throw new Error('session not found');
@@ -500,6 +525,19 @@ export class Engine {
 
     // 先记录用户消息（即使后续 resolveClient 失败也不丢用户输入）
     const userMsg: AgentMessage = newUserMessage('user', prompt);
+    // 附件：图片 → image_url 块（多模态 VLM 本地模型可理解）；文本文件 → 内容块（避免模型瞎猜路径）
+    if (options.attachments && options.attachments.length > 0) {
+      userMsg.content = [...userMsg.content];
+      for (const a of options.attachments) {
+        if (a.kind === 'image' && a.dataUrl) {
+          userMsg.content.push(imageBlock(a.dataUrl));
+        } else if (a.kind === 'file' && a.content != null) {
+          userMsg.content.push(
+            textBlock(`\n\n【附件文件：${a.name}】\n${a.content.slice(0, 100_000)}`),
+          );
+        }
+      }
+    }
     await this.sessions.appendMessage(session, userMsg);
     // 注意：不在此发空 text_delta——会残留空 assistant 消息（模型先推理/工具时正文为空）
 
@@ -592,12 +630,15 @@ export class Engine {
         cancelled: result.cancelled,
       };
     } catch (err) {
+      // 持久化错误详情到服务端日志：工具异常/模型流异常都会走到这里，
+      // 打印完整栈便于排查"任务中途终止"（前端仅显示 error 事件，栈不可见）。
+      const errMsg = err instanceof Error ? err.message : String(err);
+      console.error('[infuture] run error:', errMsg, '\n', err instanceof Error ? err.stack : '');
       session.control.finalizing(lease);
       session.control.complete(lease, true);
       this.activeRuns.delete(lease.runId);
-      const message = err instanceof Error ? err.message : String(err);
-      emit({ type: 'error', runId: lease.runId, message });
-      return { sessionId: session.id, runId: lease.runId, reply: '', turns: 0, cancelled: false, error: message };
+      emit({ type: 'error', runId: lease.runId, message: errMsg });
+      return { sessionId: session.id, runId: lease.runId, reply: '', turns: 0, cancelled: false, error: errMsg };
     }
   }
 
@@ -614,8 +655,14 @@ export class Engine {
     this.activeRuns.get(runId)?.abort();
   }
 
-  dispose(): void {
+  async dispose(): Promise<void> {
     this.coding.dispose();
+    // 本地模型进程是本服务的子进程：服务退出时一并停止（含清理注册的本地模型）
+    try {
+      await this.localModels.stop();
+    } catch {
+      // 清理失败不阻断退出
+    }
   }
 }
 

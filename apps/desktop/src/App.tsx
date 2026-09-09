@@ -9,6 +9,7 @@ import { InspectorPanel } from './components/InspectorPanel';
 import { ApprovalCapsule } from './components/ApprovalCapsule';
 import { GoalsPanel } from './components/GoalsPanel';
 import { SettingsView } from './components/SettingsView';
+import { LocalModelsPanel } from './components/LocalModelsPanel';
 import { StatusBar } from './components/StatusBar';
 
 function Workbench() {
@@ -26,6 +27,8 @@ function Workbench() {
             <FilesPanel />
           ) : view === 'workers' ? (
             <GoalsPanel />
+          ) : view === 'local' ? (
+            <LocalModelsPanel />
           ) : view === 'settings' ? (
             <SettingsView />
           ) : (

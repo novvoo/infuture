@@ -361,7 +361,9 @@ export function Composer() {
   const [text, setText] = useState('');
   const [showMenu, setShowMenu] = useState(false);
   const [activeIdx, setActiveIdx] = useState(0);
+  const [attachments, setAttachments] = useState<Array<{ kind: 'image' | 'file'; name: string; dataUrl?: string; content?: string }>>([]);
   const taRef = useRef<HTMLTextAreaElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
   const { sendMessage, stop, clearMessages, spawnWorkers, setView, invokeTool, logInfo } = useAppApi();
   const { busy, connected, runId, tools } = useAppState();
 
@@ -548,9 +550,41 @@ export function Composer() {
     }
   };
 
+  /** 读取选择的附件：图片 → base64 dataURL；文本文件（<200KB）→ 文本内容。 */
+  const onPickFiles = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []);
+    e.target.value = '';
+    for (const f of files) {
+      void (async () => {
+        if (f.type.startsWith('image/')) {
+          const dataUrl = await new Promise<string>((res, rej) => {
+            const r = new FileReader();
+            r.onload = () => res(String(r.result));
+            r.onerror = () => rej(new Error('读取图片失败'));
+            r.readAsDataURL(f);
+          });
+          setAttachments((prev) => [...prev, { kind: 'image', name: f.name, dataUrl }]);
+          return;
+        }
+        if (f.size > 200 * 1024) {
+          logInfo('附件', `「${f.name}」超过 200KB，仅支持图片或文本文件`);
+          return;
+        }
+        const content = await new Promise<string>((res, rej) => {
+          const r = new FileReader();
+          r.onload = () => res(String(r.result));
+          r.onerror = () => rej(new Error('读取文件失败'));
+          r.readAsText(f);
+        });
+        setAttachments((prev) => [...prev, { kind: 'file', name: f.name, content }]);
+      })().catch((err) => logInfo('附件', String(err)));
+    }
+  };
+
   const submit = async () => {
     const value = text.trim();
-    if (!value) return;
+    const attach = attachments;
+    if (!value && attach.length === 0) return;
     setShowMenu(false);
 
     // 1) 文本**任意位置**的 /指令 都提取触发（可多个；如 "先 /search A，再 /git pr repo 1"）
@@ -567,7 +601,8 @@ export function Composer() {
     ) {
       if (busy) return;
       setText('');
-      await sendMessage(value);
+      setAttachments([]);
+      await sendMessage(value, attach);
       return;
     }
 
@@ -575,7 +610,10 @@ export function Composer() {
       for (const seg of segs) await executeParsed(seg);
       // 剩余非指令文本作为普通消息（agent 能看到工具结果历史，可继续总结/追问）
       if (rest && !isConnectiveOnly(rest) && !busy) {
-        await sendMessage(rest);
+        setAttachments([]);
+        await sendMessage(rest, attach);
+      } else {
+        setAttachments([]);
       }
       setText('');
       return;
@@ -586,13 +624,15 @@ export function Composer() {
     if (nl) {
       await invokeTool(nl.tool, nl.args, nl.command);
       setText('');
+      setAttachments([]);
       return;
     }
 
     // 3) 普通消息
     if (busy) return;
     setText('');
-    await sendMessage(value);
+    setAttachments([]);
+    await sendMessage(value, attach);
   };
 
   const onKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -645,38 +685,79 @@ export function Composer() {
           ))}
         </div>
       )}
-      <textarea
-        ref={taRef}
-        value={text}
-        placeholder={connected ? '输入消息…（/ 指令在任意位置都触发；也可直接说 搜索 / 审查 / 打开网页 / 找文件…；Enter 发送）' : '未连接到 infuture server — 先运行 npm run server'}
-        onChange={(e) => {
-          setText(e.target.value);
-          setShowMenu(e.target.value.startsWith('/'));
-        }}
-        onKeyDown={onKey}
-        disabled={!connected}
-      />
-      <div className="row">
-        <div className="hint">
-          <ModelMenu />
-          <ThinkingMenu />
-          {busy && ' · 运行中…'}
-        </div>
-        {busy ? (
-          runId ? (
-            <button className="btn danger" onClick={() => void stop()}>
-              停止
-            </button>
-          ) : (
-            <button className="btn" disabled>
-              运行中…
-            </button>
-          )
-        ) : (
-          <button className="btn primary" onClick={submit} disabled={!connected || !text.trim()}>
-            发送
-          </button>
+      <div className="composer-box">
+        {attachments.length > 0 && (
+          <div className="attach-row">
+            {attachments.map((a, i) => (
+              <div key={i} className="attach-chip">
+                {a.kind === 'image' && a.dataUrl ? (
+                  <img src={a.dataUrl} alt={a.name} className="attach-thumb" />
+                ) : (
+                  <span className="attach-ico">📄</span>
+                )}
+                <span className="attach-name" title={a.name}>{a.name}</span>
+                <button
+                  className="attach-x"
+                  title="移除附件"
+                  onClick={() => setAttachments((prev) => prev.filter((_, j) => j !== i))}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
         )}
+        <textarea
+          ref={taRef}
+          value={text}
+          placeholder={connected ? '输入消息…（/ 指令在任意位置触发；可附图片/文件，多模态本地模型可直接看图）' : '未连接到 infuture server — 先运行 npm run server'}
+          onChange={(e) => {
+            setText(e.target.value);
+            setShowMenu(e.target.value.startsWith('/'));
+          }}
+          onKeyDown={onKey}
+          disabled={!connected}
+        />
+        <div className="composer-toolbar">
+          <input
+            ref={fileRef}
+            type="file"
+            multiple
+            hidden
+            onChange={onPickFiles}
+            accept="image/*,text/*,application/json,application/xml,text/markdown"
+          />
+          <button
+            className="btn sm"
+            title="添加附件（图片 / 文本文件）"
+            onClick={() => fileRef.current?.click()}
+            disabled={!connected}
+          >
+            📎 附件{attachments.length > 0 ? ` (${attachments.length})` : ''}
+          </button>
+          <div className="composer-models">
+            <ModelMenu />
+            <ThinkingMenu />
+            {busy && <span style={{ fontSize: 11, opacity: 0.7, marginLeft: 4 }}>运行中…</span>}
+          </div>
+          <div className="composer-send">
+            {busy ? (
+              runId ? (
+                <button className="btn sm danger" onClick={() => void stop()}>
+                  停止
+                </button>
+              ) : (
+                <button className="btn sm" disabled>
+                  运行中…
+                </button>
+              )
+            ) : (
+              <button className="btn sm primary" onClick={submit} disabled={!connected || (!text.trim() && attachments.length === 0)}>
+                发送
+              </button>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );

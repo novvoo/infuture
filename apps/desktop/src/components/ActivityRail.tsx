@@ -9,6 +9,7 @@ const ICONS: Record<RailView, string> = {
   files: '🗂',
   workers: '🎯',
   settings: '⚙',
+  local: '🧠',
 };
 
 const LABELS: Record<RailView, string> = {
@@ -16,10 +17,11 @@ const LABELS: Record<RailView, string> = {
   files: '文件',
   workers: '目标',
   settings: '设置',
+  local: '本地模型',
 };
 
 export function ActivityRail({ view, onView }: { view: RailView; onView: (v: RailView) => void }) {
-  const items: RailView[] = ['chat', 'files', 'workers'];
+  const items: RailView[] = ['chat', 'files', 'workers', 'local'];
   return (
     <nav className="rail" aria-label="活动导航">
       <div className="rail-logo">∞</div>

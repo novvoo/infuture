@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useRef, useState, useCallback } from 'react';
 import { DesktopRpc } from './rpc';
-import type { ApprovalPending, ChannelConfigView, ChannelStatus, DirEntry, FileView, LoopEventView, LoopTodo, LoopWorker, ModelInfo, RailView, RunEvent, RunLogItem, SessionInfo, WorkerLogEntry } from './types';
+import type { ApprovalPending, ChannelConfigView, ChannelStatus, DirEntry, FileView, LocalModelStatus, LoopEventView, LoopTodo, LoopWorker, ModelInfo, RailView, RunEvent, RunLogItem, SessionInfo, WorkerLogEntry } from './types';
 
 export interface SettingsInfo {
   defaultModel?: string;
@@ -17,7 +17,10 @@ export interface SettingsInfo {
 export type AuthInfo = Record<string, { baseUrl: string; hasKey: boolean }>;
 
 interface AppApi {
-  sendMessage: (text: string) => Promise<void>;
+  sendMessage: (
+    text: string,
+    attachments?: Array<{ kind: 'image' | 'file'; name: string; dataUrl?: string; content?: string }>,
+  ) => Promise<void>;
   stop: () => Promise<void>;
   newSession: () => Promise<void>;
   switchSession: (id: string) => Promise<void>;
@@ -35,9 +38,19 @@ interface AppApi {
     contextWindow?: number;
     maxTokens?: number;
     reasoning?: boolean;
+    input_types?: string[];
   }) => Promise<void>;
   removeModel: (id: string) => Promise<void>;
   refreshModels: () => Promise<void>;
+  // 本地模型（下载 / 启动服务 / 自动注册）
+  localStatus: () => Promise<LocalModelStatus | null>;
+  localDownload: (repo: string) => Promise<{ ok: boolean; id: string; message?: string }>;
+  localStart: (modelDir?: string, port?: number) => Promise<{ ok: boolean; message: string }>;
+  localStop: () => Promise<{ ok: boolean; message: string }>;
+  localRefresh: () => Promise<{ ok: boolean; registered: string[] }>;
+  localSetSettings: (patch: { modelRoot?: string; port?: number; autoRegister?: boolean }) => Promise<void>;
+  localDeactivate: (id: string) => Promise<{ ok: boolean; message: string }>;
+  localTest: () => Promise<{ ok: boolean; message: string; costMs?: number; sample?: string }>;
   // 会话管理
   deleteSession: (id: string) => Promise<void>;
   renameSession: (id: string, name: string) => Promise<void>;
@@ -114,6 +127,8 @@ interface AppState {
   settings: SettingsInfo | null;
   auth: AuthInfo | null;
   channelStatus: ChannelStatus | null;
+  /** 本地模型状态（下载 / 服务 / 自动注册）。 */
+  localStatus: LocalModelStatus | null;
   // 文件浏览器状态
   files: DirEntry[];
   fsPath: string;
@@ -217,6 +232,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [settings, setSettings] = useState<SettingsInfo | null>(null);
   const [auth, setAuth] = useState<AuthInfo | null>(null);
   const [channelStatus, setChannelStatus] = useState<ChannelStatus | null>(null);
+  const [localModelStatus, setLocalModelStatus] = useState<LocalModelStatus | null>(null);
   const [files, setFiles] = useState<DirEntry[]>([]);
   const [fsPath, setFsPath] = useState('');
   const [fsRoot, setFsRoot] = useState('');
@@ -571,17 +587,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return off;
   }, []);
 
-  const sendMessage = useCallback(async (text: string) => {
-    const rpc = rpcRef.current;
-    const sessionId = currentSessionRef.current;
-    if (!rpc || !sessionId) return;
-    const msgs = bumpMessages(sessionId, (prev) => [...prev, { role: 'user', text }]);
-    setMessages(msgs);
-    busyCacheRef.current.set(sessionId, true);
-    setBusy(true);
-    try {
-      await rpc.call('session.send', { sessionId, prompt: text });
-    } catch (err) {
+  const sendMessage = useCallback(
+    async (
+      text: string,
+      attachments?: Array<{ kind: 'image' | 'file'; name: string; dataUrl?: string; content?: string }>,
+    ) => {
+      const rpc = rpcRef.current;
+      const sessionId = currentSessionRef.current;
+      if (!rpc || !sessionId) return;
+      const attachNote = attachments && attachments.length > 0 ? '  📎' + attachments.map((a) => a.name).join(', ') : '';
+      const msgs = bumpMessages(sessionId, (prev) => [...prev, { role: 'user', text: text + attachNote }]);
+      setMessages(msgs);
+      busyCacheRef.current.set(sessionId, true);
+      setBusy(true);
+      try {
+        await rpc.call('session.send', { sessionId, prompt: text, attachments });
+      } catch (err) {
       busyCacheRef.current.set(sessionId, false);
       setBusy(false);
       const log = bumpRunLog(sessionId, (prev) => [
@@ -707,6 +728,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     contextWindow?: number;
     maxTokens?: number;
     reasoning?: boolean;
+    input_types?: string[];
   }) => {
     const rpc = rpcRef.current;
     if (!rpc) return;
@@ -728,6 +750,83 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (!rpc) return;
     setModels((await rpc.call<ModelInfo[]>('model.list')) ?? []);
   }, []);
+
+  const localStatus = useCallback(async () => {
+    const rpc = rpcRef.current;
+    if (!rpc) return null;
+    const s = (await rpc.call<LocalModelStatus>('local.status')) as LocalModelStatus;
+    setLocalModelStatus(s);
+    return s;
+  }, []);
+
+  const localDownload = useCallback(async (repo: string) => {
+    const rpc = rpcRef.current;
+    if (!rpc) return { ok: false as const, id: '', message: '服务未连接' };
+    const r = (await rpc.call('local.download', { repo })) as { ok: boolean; id: string; message?: string };
+    void localStatus();
+    return r;
+  }, [localStatus]);
+
+  const localStart = useCallback(
+    async (modelDir?: string, port?: number) => {
+      const rpc = rpcRef.current;
+      if (!rpc) return { ok: false as const, message: '服务未连接' };
+      const r = (await rpc.call('local.start', { modelDir, port })) as { ok: boolean; message: string };
+      await localStatus();
+      await refreshModels();
+      return r;
+    },
+    [localStatus, refreshModels],
+  );
+
+  const localStop = useCallback(async () => {
+    const rpc = rpcRef.current;
+    if (!rpc) return { ok: false as const, message: '服务未连接' };
+    const r = (await rpc.call('local.stop')) as { ok: boolean; message: string };
+    await localStatus();
+    // 停止会同时停用本地模型，必须同步刷新模型菜单（否则已配置模型残留）
+    await refreshModels();
+    return r;
+  }, [localStatus, refreshModels]);
+
+  const localRefresh = useCallback(async () => {
+    const rpc = rpcRef.current;
+    if (!rpc) return { ok: false as const, registered: [] };
+    const r = (await rpc.call('local.refresh')) as { ok: boolean; registered: string[] };
+    await localStatus();
+    await refreshModels();
+    return r;
+  }, [localStatus, refreshModels]);
+
+  const localSetSettings = useCallback(
+    async (patch: { modelRoot?: string; port?: number; autoRegister?: boolean }) => {
+      const rpc = rpcRef.current;
+      if (!rpc) return;
+      await rpc.call('local.settings', patch);
+      await localStatus();
+    },
+    [localStatus],
+  );
+
+  const localDeactivate = useCallback(
+    async (id: string) => {
+      const rpc = rpcRef.current;
+      if (!rpc) return { ok: false as const, message: '服务未连接' };
+      const r = (await rpc.call('local.deactivate', { id })) as { ok: boolean; message: string };
+      await localStatus();
+      await refreshModels();
+      return r;
+    },
+    [localStatus, refreshModels],
+  );
+
+  const localTest = useCallback(async () => {
+    const rpc = rpcRef.current;
+    if (!rpc) return { ok: false as const, message: '服务未连接' };
+    const r = (await rpc.call('local.test')) as { ok: boolean; message: string; costMs?: number; sample?: string };
+    await localStatus();
+    return r;
+  }, [localStatus]);
 
   // ===== 会话管理（增删改） =====
   const deleteSession = useCallback(async (id: string) => {
@@ -1044,7 +1143,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  const state: AppState = { connected, sessions, currentSessionId, messages, models, currentModel, tools, runLog, pendingApproval, busy, runId, doctor, settings, auth, channelStatus, files, fsPath, fsRoot, fileView, workers, workerLogs, goalTodos, goalEvents, loopStatus, loopRuns, loopFrontier, view };
+  const state: AppState = { connected, sessions, currentSessionId, messages, models, currentModel, tools, runLog, pendingApproval, busy, runId, doctor, settings, auth, channelStatus, localStatus: localModelStatus, files, fsPath, fsRoot, fileView, workers, workerLogs, goalTodos, goalEvents, loopStatus, loopRuns, loopFrontier, view };
   const api: AppApi = {
     sendMessage,
     stop,
@@ -1058,6 +1157,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     addModel,
     removeModel,
     refreshModels,
+    localStatus,
+    localDownload,
+    localStart,
+    localStop,
+    localRefresh,
+    localSetSettings,
+    localDeactivate,
+    localTest,
     deleteSession,
     clearMessages: () => setMessages([]),
     renameSession,
