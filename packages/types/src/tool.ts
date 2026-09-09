@@ -60,6 +60,8 @@ export interface AgentConfig {
   toolsExecutionMode: 'parallel' | 'sequential';
   /** 单轮 reasoning 字符数上限：超限且仍无任何文本/工具调用时强制收敛。默认 30000——只兜底病态无限推理；深推理任务（如 worker 解题）不应被掐断。委派优先模式另有更低的专用上限。 */
   maxReasoningChars?: number;
+  /** 当前模型是否支持图像输入（视觉）。false 时 run-loop 会剥离注入的截图图像块，避免非视觉模型 API 报错中断。 */
+  vision?: boolean;
   hooks?: ToolCallHooks;
 }
 

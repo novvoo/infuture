@@ -359,7 +359,7 @@ export class Engine {
   async spawnSubagent(task: string, _opts: { isolated?: boolean } = {}): Promise<string> {
     // 子 agent 解析当前默认模型（会话内模型接入后续阶段）
     const virtual = { meta: { model: 'default' } } as unknown as Session;
-    const { client } = await this.resolveClient(virtual);
+    const { model, client } = await this.resolveClient(virtual);
     // 持久化子会话（可查），不抢占当前会话
     const subSession = await this.sessions.create(`[sub] ${task.slice(0, 24)}`, {
       kind: 'clone',
@@ -381,6 +381,7 @@ export class Engine {
           maxTurns: this.settings.maxTurns,
           thinkingBudget: this.settings.thinkingBudget,
           thinkingLevel: this.settings.thinkingLevel,
+          vision: (model.input_types ?? []).includes('image'),
           toolsExecutionMode: 'parallel',
         }),
         registry: this.tools,
@@ -542,6 +543,7 @@ export class Engine {
             '操作目标窗口时保持其原有尺寸与位置，不要缩放/最大化/全屏（除非用户明确要求）。\n' +
             '9. 用户要求"用绘图工具/画布模拟人工还原图片"或任何需要看到界面/画面的任务时，走视觉闭环：' +
             '系统已自动截取当前屏幕并注入（视觉/截图任务首轮会自动截图，无需你再调 screenshot 也能看到屏幕）。' +
+            '任务涉及参考图片文件时用 read 读取该路径（read 图片会返回"图片路径"并自动注入，你就能看到参考图）；' +
             '禁止用 browser 打开本地 HTML 画布模拟还原（headless 无法操作画布也无法截图验证）；' +
             '必须操作真实桌面画布/绘图应用（list_apps → get_app_state → click/drag 逐块绘制），' +
             '每完成一部分再用 computer_use action=screenshot 截屏验证并与参考图对比，直到还原；' +
@@ -554,6 +556,8 @@ export class Engine {
           // worker/subagent 可在 options.thinkingBudget/thinkingLevel 覆盖全局思考设置；未指定时回退全局
           thinkingBudget: options.thinkingBudget ?? this.settings.thinkingBudget,
           thinkingLevel: options.thinkingLevel ?? this.settings.thinkingLevel,
+          // 当前模型是否支持图像输入：false 时 run-loop 剥离自动截图注入，避免非视觉模型 1210 报错中断
+          vision: (model.input_types ?? []).includes('image'),
           toolsExecutionMode: 'parallel',
         }),
         registry: this.tools,

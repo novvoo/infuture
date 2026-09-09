@@ -29,6 +29,16 @@ export function readTool(cwd = process.cwd(), deps: ReadToolDeps = {}): AgentToo
       const { path: p } = (args ?? {}) as { path?: string };
       if (!p) return { result: 'read: missing `path`', is_error: true };
       const target = resolvePath(p, ctx?.cwd ?? cwd);
+      // 图片文件：返回「图片路径」标记，agent 循环会自动把图片作为图像消息注入（视觉模型直接看到图）。
+      // 只报路径不读二进制，避免乱码；注入端负责格式转换（如 PNG→JPEG）。
+      if (/\.(png|jpe?g|webp|gif)$/i.test(target)) {
+        try {
+          const st = await fs.stat(target);
+          if (st.isFile()) return { result: `图片路径: ${target}`, is_error: false };
+        } catch {
+          /* fallthrough to normal read error */
+        }
+      }
       // 引擎可用时经服务端 code_read：产出 tag + 行号并记录快照；引擎挂掉/不可用回退本地读
       if (deps.hashlineRead) {
         try {

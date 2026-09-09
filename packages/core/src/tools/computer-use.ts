@@ -23,11 +23,12 @@ const CALL_TIMEOUT_MS = 120_000;
  * 返回截图绝对路径；agent 循环会把结果图片作为图像消息注入下一轮（视觉模型直接看到屏幕）。
  */
 async function takeScreenshot(target?: string): Promise<string> {
-  const file = (target && target.trim()) || path.join(os.tmpdir(), `infuture-shot-${Date.now()}.png`);
+  // 统一输出 JPEG：多数视觉模型/API（如智谱 GLM）只接受 JPEG 图像，PNG 会报 1210 图片格式错误。
+  const file = (target && target.trim()) || path.join(os.tmpdir(), `infuture-shot-${Date.now()}.jpg`);
   await import('node:fs/promises').then((fs) => fs.mkdir(path.dirname(file), { recursive: true }));
   try {
     if (process.platform === 'darwin') {
-      await execFileAsync('screencapture', ['-x', file], { timeout: 15_000, windowsHide: true });
+      await execFileAsync('screencapture', ['-x', '-t', 'jpg', file], { timeout: 15_000, windowsHide: true });
     } else if (process.platform === 'win32') {
       const ps = [
         'Add-Type -AssemblyName System.Windows.Forms;',

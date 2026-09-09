@@ -24,7 +24,34 @@ import { buildSelectionContext, classifyTaskType, selectToolDefs, type ToolSelec
 import type { RunEventCallback } from './events.js';
 import { generateId } from '../utils/id.js';
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+const execFileAsync = promisify(execFile);
+
+/**
+ * 读取图片用于模型注入：GLM 等供应商只接受 JPEG（PNG 会报 1210 图片格式错误）→
+ * macOS 用系统 sips 把 PNG 转 JPEG 再注入；转换失败或非 PNG 则原样返回。
+ */
+async function readImageForInjection(p: string): Promise<{ mime: string; base64: string }> {
+  const ext = path.extname(p).toLowerCase();
+  const mime =
+    ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : ext === '.gif' ? 'image/gif' : ext === '.webp' ? 'image/webp' : 'image/png';
+  if (mime === 'image/png' && process.platform === 'darwin') {
+    try {
+      const tmp = path.join(os.tmpdir(), `infuture-png-${Date.now()}-${Math.random().toString(36).slice(2)}.jpg`);
+      await execFileAsync('sips', ['-s', 'format', 'jpeg', p, '--out', tmp], { timeout: 20_000 });
+      const data = await fs.readFile(tmp);
+      await fs.unlink(tmp).catch(() => {});
+      return { mime: 'image/jpeg', base64: data.toString('base64') };
+    } catch {
+      // sips 不可用（非 macOS）→ 原样返回 PNG
+    }
+  }
+  const data = await fs.readFile(p);
+  return { mime, base64: data.toString('base64') };
+}
 
 /** 工具结果文本里出现的图片路径（截图/图片文件）→ 读取并作为图像块注入同一 tool 消息，形成视觉闭环。 */
 async function attachImagesFromResult(msg: AgentMessage, resultText: string, cwd?: string): Promise<void> {
@@ -41,11 +68,8 @@ async function attachImagesFromResult(msg: AgentMessage, resultText: string, cwd
     try {
       const st = await fs.stat(p);
       if (!st.isFile() || st.size > 10 * 1024 * 1024) continue; // 上限 10MB，防止超大截图撑爆上下文
-      const data = await fs.readFile(p);
-      const ext = path.extname(p).toLowerCase();
-      const mime =
-        ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : ext === '.gif' ? 'image/gif' : ext === '.webp' ? 'image/webp' : 'image/png';
-      addImage(msg, mime, data.toString('base64'));
+      const { mime, base64 } = await readImageForInjection(p);
+      addImage(msg, mime, base64);
     } catch {
       // 文件不存在/读取失败：跳过，不阻断工具结果
     }
@@ -65,16 +89,13 @@ async function autoScreenshotForVisualTask(registry: ToolRegistry): Promise<Agen
   const p = m[1];
   const st = await fs.stat(p);
   if (!st.isFile() || st.size > 10 * 1024 * 1024) return null;
-  const data = await fs.readFile(p);
-  const ext = path.extname(p).toLowerCase();
-  const mime =
-    ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : ext === '.gif' ? 'image/gif' : ext === '.webp' ? 'image/webp' : 'image/png';
+  const { mime, base64 } = await readImageForInjection(p);
   const msg = emptyAgentMessage();
   msg.content.push({
     type: 'text',
     text: '[系统] 检测到视觉/截图任务，已自动截取当前屏幕并注入（screenshot）。直接基于屏幕内容开始工作；后续每完成关键步骤可再调用 computer_use action=screenshot 验证当前状态。',
   });
-  addImage(msg, mime, data.toString('base64'));
+  addImage(msg, mime, base64);
   return msg;
 }
 
@@ -203,6 +224,8 @@ export async function inloop(input: RunLoopInput): Promise<RunLoopResult> {
   const messages: AgentMessage[] = [...history];
   let usage: Usage = emptyUsage();
   let cancelled = false;
+  /** 图片错误降级已执行（只允许一次：剥离 image 重发）。 */
+  let visionFallbackDone = false;
   /** 追踪最近的 assistant 消息（含文本），供 maxTurns/错误收尾时返回。 */
   let lastAssistant: AgentMessage = newAssistantMessage();
 
@@ -250,8 +273,9 @@ export async function inloop(input: RunLoopInput): Promise<RunLoopResult> {
     // 识别结果透出（前端可展示"已识别：多 worker 协作任务"）
     if (turn === 0) emit({ type: 'task_type', runId, taskType });
     // 视觉/截图类任务：首轮自动截取当前屏幕并注入图像上下文（不等模型自觉调用 computer_use）。
+    // 仅视觉模型生效：非视觉模型截图会被剥离，跳过以免白截。
     // 截图失败（如 Screen Recording 权限缺失）静默跳过，不阻断流程。
-    if (turn === 0 && taskType === 'visual') {
+    if (turn === 0 && taskType === 'visual' && config.vision === true) {
       try {
         const shot = await autoScreenshotForVisualTask(registry);
         if (shot) messages.push(shot);
@@ -262,10 +286,26 @@ export async function inloop(input: RunLoopInput): Promise<RunLoopResult> {
     // 委派优先模式下收紧单轮推理上限：起 worker 不需要深推理
     const turnMaxReasoning = delegateMode ? DELEGATE_MAX_REASONING : maxReasoningChars;
 
+    // 模型不支持视觉：剥离注入的 image_url 块（自动截图/工具结果截图），防止上游 1210 报错中断；
+    // 并在 system prompt 追加提示，引导用文本手段（get_app_state/读文件）了解状态。
+    const hasImageBlocks = messages.some((m) => m.content.some((b) => b.type === 'image_url'));
+    let requestMessages: AgentMessage[] = messages;
+    let effectiveSystemPrompt = config.systemPrompt;
+    if (hasImageBlocks && config.vision !== true) {
+      requestMessages = messages.map((m) =>
+        m.content.some((b) => b.type === 'image_url')
+          ? { ...m, content: m.content.filter((b) => b.type !== 'image_url') }
+          : m,
+      );
+      effectiveSystemPrompt =
+        config.systemPrompt +
+        '\n（注意：当前模型不支持视觉，截图图像已被剥离；请用 computer_use get_app_state、读文件等文本手段了解屏幕/画布状态，并在无法看到画面时明确告知用户需要视觉模型。）';
+    }
+
     const request = {
       model,
-      systemPrompt: config.systemPrompt,
-      messages,
+      systemPrompt: effectiveSystemPrompt,
+      messages: requestMessages,
       tools: selected.defs,
       // 思考档位：config（engine 按设置注入）> input 直接参数
       thinkingLevel: config.thinkingLevel ?? thinkingLevel,
@@ -334,6 +374,19 @@ export async function inloop(input: RunLoopInput): Promise<RunLoopResult> {
         }
       }
     } catch (err) {
+      // 图片相关错误（模型标注支持视觉但上游拒绝/格式问题）：剥离图像降级重发一次，避免任务中断
+      const errMsg = err instanceof Error ? err.message : String(err);
+      const hasImgNow = messages.some((m) => m.content.some((b) => b.type === 'image_url'));
+      if (!visionFallbackDone && hasImgNow && /1210|图片|vision|image/i.test(errMsg)) {
+        visionFallbackDone = true;
+        // 原地剥离全部 image_url 块，下一轮不带图重发
+        for (let i = 0; i < messages.length; i++) {
+          if (messages[i] && messages[i].content.some((b) => b.type === 'image_url')) {
+            messages[i] = { ...messages[i]!, content: messages[i]!.content.filter((b) => b.type !== 'image_url') };
+          }
+        }
+        continue;
+      }
       if (cancelled || (signal?.aborted ?? false)) {
         flushText();
         flushReasoning();
