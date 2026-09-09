@@ -27,6 +27,8 @@ const CORE_TOOLS = new Set([
   'inspect_image',
   'spawn_workers',
   'list_workers',
+  // 桌面 GUI 控制：schema 轻量且触发场景无法用关键词穷举（打开任意应用都可能是），恒在暴露让模型按需自动调用
+  'computer_use',
 ]);
 
 /** 联网工具：默认暴露（web_search / web_fetch）。 */
