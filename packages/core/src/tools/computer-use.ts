@@ -7,6 +7,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import path from 'node:path';
+import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import type { AgentTool, ToolCallResult } from '@infuture/types';
 import { toolDef } from '@infuture/types';
@@ -15,6 +16,41 @@ const execFileAsync = promisify(execFile);
 /** 单次返回保护上限：UI 树可能很大，超限截断并提示收窄（max_tree_nodes/max_tree_depth/text_limit）。 */
 const MAX_OUTPUT = 50_000;
 const CALL_TIMEOUT_MS = 120_000;
+
+/**
+ * screenshot — 截取当前屏幕（视觉闭环核心）。
+ * macOS 用内置 screencapture；Linux 尝试 import（ImageMagick）→ gnome-screenshot；Windows 用 PowerShell。
+ * 返回截图绝对路径；agent 循环会把结果图片作为图像消息注入下一轮（视觉模型直接看到屏幕）。
+ */
+async function takeScreenshot(target?: string): Promise<string> {
+  const file = (target && target.trim()) || path.join(os.tmpdir(), `infuture-shot-${Date.now()}.png`);
+  await import('node:fs/promises').then((fs) => fs.mkdir(path.dirname(file), { recursive: true }));
+  try {
+    if (process.platform === 'darwin') {
+      await execFileAsync('screencapture', ['-x', file], { timeout: 15_000, windowsHide: true });
+    } else if (process.platform === 'win32') {
+      const ps = [
+        'Add-Type -AssemblyName System.Windows.Forms;',
+        'Add-Type -AssemblyName System.Drawing;',
+        '$b=[System.Windows.Forms.Screen]::PrimaryScreen.Bounds;',
+        `$bmp=New-Object System.Drawing.Bitmap $b.Width,$b.Height;`,
+        '$g=[System.Drawing.Graphics]::FromImage($bmp);',
+        '$g.CopyFromScreen($b.Location,[System.Drawing.Point]::Empty,$b.Size);',
+        `$bmp.Save('${file.replace(/'/g, "''")}');`,
+      ].join(' ');
+      await execFileAsync('powershell', ['-NoProfile', '-Command', ps], { timeout: 20_000, windowsHide: true });
+    } else {
+      try {
+        await execFileAsync('import', ['-window', 'root', file], { timeout: 15_000, windowsHide: true });
+      } catch {
+        await execFileAsync('gnome-screenshot', ['-f', file], { timeout: 15_000, windowsHide: true });
+      }
+    }
+  } catch (err) {
+    throw new Error(`截图失败：${err instanceof Error ? err.message : String(err)}（macOS 需授权 Screen Recording）`);
+  }
+  return file;
+}
 
 /** 已探测到的 CLI 路径（模块级缓存，避免每次调用都探测）。 */
 let resolvedBin: string | null = null;
@@ -60,6 +96,7 @@ export interface ComputerUseToolOptions {
 const REQUIRED_ARGS: Record<string, string[]> = {
   list_apps: [],
   get_app_state: ['app'],
+  screenshot: [],
   click: ['app'],
   perform_secondary_action: ['app', 'element_index'],
   scroll: ['app', 'direction'],
@@ -71,7 +108,7 @@ const REQUIRED_ARGS: Record<string, string[]> = {
 
 export function computerUseTool(options: ComputerUseToolOptions = {}): AgentTool {
   return {
-    def: toolDef('computer_use', 'Desktop GUI control (macOS/Linux/Windows). AUTO-USE whenever the task needs to open/switch/operate a desktop app, click UI elements, type into non-browser windows, scroll/drag, or inspect desktop state — do not wait for explicit user instruction; prefer this over shell coordinate guessing. Actions: list_apps / get_app_state / click / perform_secondary_action / scroll / drag / type_text / press_key / set_value / doctor.', {
+    def: toolDef('computer_use', 'Desktop GUI control (macOS/Linux/Windows). AUTO-USE whenever the task needs to open/switch/operate a desktop app, click UI elements, type into non-browser windows, scroll/drag, or inspect desktop state — do not wait for explicit user instruction; prefer this over shell coordinate guessing. Actions: list_apps / get_app_state / screenshot / click / perform_secondary_action / scroll / drag / type_text / press_key / set_value / doctor. screenshot 截取当前屏幕并返回路径（agent 会自动把截图作为图像消息回传，视觉模型可直接看到屏幕；视觉/绘图/UI 任务先截图观察，再操作，操作后再截图验证）。', {
       type: 'object',
       properties: {
         action: {
@@ -113,7 +150,8 @@ export function computerUseTool(options: ComputerUseToolOptions = {}): AgentTool
       };
       if (!action || !action.trim()) {
         return {
-          result: 'computer_use: missing `action`（list_apps/get_app_state/click/perform_secondary_action/scroll/drag/type_text/press_key/set_value/doctor）',
+          result:
+            'computer_use: missing `action`（list_apps/get_app_state/screenshot/click/perform_secondary_action/scroll/drag/type_text/press_key/set_value/doctor）',
           is_error: true,
         };
       }
@@ -134,6 +172,15 @@ export function computerUseTool(options: ComputerUseToolOptions = {}): AgentTool
               ' 请补齐后重试。',
             is_error: true,
           };
+        }
+      }
+      // screenshot 不走 OCU：直接系统截屏（OCU 无截图命令）
+      if (action === 'screenshot') {
+        try {
+          const file = await takeScreenshot(typeof args?.target === 'string' ? (args.target as string) : undefined);
+          return { result: `screenshot saved: ${file}`, is_error: false };
+        } catch (err) {
+          return { result: err instanceof Error ? err.message : String(err), is_error: true };
         }
       }
       let bin: string;

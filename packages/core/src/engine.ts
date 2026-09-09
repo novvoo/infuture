@@ -540,10 +540,11 @@ export class Engine {
             '流程：先 list_apps 确认可用应用 → get_app_state 拿 UI 树与 element_index → 用 element_index 精确操作；' +
             'macOS 首次使用前先 action=doctor 检查权限；element_index 必须来自最近一次 get_app_state，禁止猜测；' +
             '操作目标窗口时保持其原有尺寸与位置，不要缩放/最大化/全屏（除非用户明确要求）。\n' +
-            '9. 用户要求"用绘图工具/画布模拟人工还原图片"时，必须真实执行绘制而不是只给分析或 SVG：' +
-            '先用 bash/PIL 等把图片像素量化（二值化/颜色分块，得到色块坐标与颜色），' +
-            '再自动用 computer_use 打开绘图应用或画布页面（list_apps → get_app_state → click/drag 逐块绘制），' +
-            '实现像素级还原；不允许只输出颜色分析或生成 SVG 文件后声称完成。',
+            '9. 用户要求"用绘图工具/画布模拟人工还原图片"或任何需要看到界面/画面的任务时，走视觉闭环：' +
+            '先用 computer_use action=screenshot 截屏（截图会自动作为图像回传，你能直接看到屏幕），' +
+            '再看清参考图与画布状态后操作（list_apps → get_app_state → click/drag 逐块绘制），' +
+            '每完成一部分再 screenshot 验证并与参考图对比，直到还原；' +
+            '不允许只输出颜色分析/操作序列 JSON/SVG 后声称完成，必须真实操作画布并截图验证。\n',
           maxTurns: this.settings.maxTurns,
           // worker/subagent 可在 options.thinkingBudget/thinkingLevel 覆盖全局思考设置；未指定时回退全局
           thinkingBudget: options.thinkingBudget ?? this.settings.thinkingBudget,

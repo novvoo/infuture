@@ -8,6 +8,7 @@ import {
   type AgentMessage,
   type AgentConfig,
   type Usage,
+  addImage,
   emptyUsage,
   newAssistantMessage,
   newToolMessage,
@@ -21,6 +22,34 @@ import type { ToolRegistry } from '../tools/registry.js';
 import { buildSelectionContext, classifyTaskType, selectToolDefs, type ToolSelectionOptions } from '../tools/selection.js';
 import type { RunEventCallback } from './events.js';
 import { generateId } from '../utils/id.js';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+
+/** 工具结果文本里出现的图片路径（截图/图片文件）→ 读取并作为图像块注入同一 tool 消息，形成视觉闭环。 */
+async function attachImagesFromResult(msg: AgentMessage, resultText: string, cwd?: string): Promise<void> {
+  const base = cwd || process.cwd();
+  const re =
+    /(?:screenshot saved|image(?: file)?|图片(?:路径|文件)?)[:：]?\s*([^\s"']+\.(?:png|jpe?g|gif|webp))|!\[[^\]]*\]\(([^)]+\.(?:png|jpe?g|gif|webp))\)/gi;
+  const seen = new Set<string>();
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(resultText))) {
+    const raw = (m[1] ?? m[2] ?? '').trim().replace(/[)\]"'`]/g, '');
+    if (!raw || seen.has(raw)) continue;
+    seen.add(raw);
+    const p = path.isAbsolute(raw) ? raw : path.resolve(base, raw);
+    try {
+      const st = await fs.stat(p);
+      if (!st.isFile() || st.size > 10 * 1024 * 1024) continue; // 上限 10MB，防止超大截图撑爆上下文
+      const data = await fs.readFile(p);
+      const ext = path.extname(p).toLowerCase();
+      const mime =
+        ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : ext === '.gif' ? 'image/gif' : ext === '.webp' ? 'image/webp' : 'image/png';
+      addImage(msg, mime, data.toString('base64'));
+    } catch {
+      // 文件不存在/读取失败：跳过，不阻断工具结果
+    }
+  }
+}
 
 export interface RunLoopInput {
   runId: string;
@@ -342,6 +371,7 @@ export async function inloop(input: RunLoopInput): Promise<RunLoopResult> {
           emit({ type: 'approval_resolved', runId, requestId, approved: true });
           emit({ type: 'tool_result', runId, id: call.id, name: call.name, result: early.result, isError: early.is_error });
           messages.push(newToolMessage(call.id, early.result, early.is_error));
+          await attachImagesFromResult(messages[messages.length - 1] as AgentMessage, early.result, cwd);
           continue;
         }
       }
@@ -378,6 +408,7 @@ export async function inloop(input: RunLoopInput): Promise<RunLoopResult> {
       }
       emit({ type: 'tool_result', runId, id: call.id, name: call.name, result: resultText, isError, costMs });
       messages.push(newToolMessage(call.id, resultText, isError));
+      await attachImagesFromResult(messages[messages.length - 1] as AgentMessage, resultText, cwd);
     }
   }
 

@@ -29,8 +29,15 @@ import process from 'node:process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-/** 初始化编程引擎全局 settings（BashTool 等依赖 settings.get）。 */
-const ompSettings = await Settings.init();
+/**
+ * 初始化编程引擎全局 settings（BashTool 等依赖 settings.get）。
+ * 隔离模式：不读 ~/.omp/agent/config.yml（避免 omp CLI 的 modelRoles 等配置泄漏进 infuture），
+ * 使用内存配置 + 引擎 schema 默认值，与用户本机 omp CLI 完全独立。
+ * modelRoles.vision：inspect_image 等图片理解工具解析的视觉模型角色。
+ * 默认指向 openai-codex/gpt-5（本机 Codex CLI 登录态，支持图片输入）；
+ * 如需更换，直接改这里（可用模型列表见引擎 ModelRegistry.getAvailable()）。
+ */
+const ompSettings = Settings.isolated({ modelRoles: { vision: 'openai-codex/gpt-5' } });
 
 /** 本服务暴露的工具白名单（覆盖编程能力核心集）。 */
 const TOOL_WHITELIST = new Set([
