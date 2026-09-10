@@ -570,3 +570,127 @@ body {
 .hljs-strong { color: #c9d1d9; font-weight: 600; }
 .hljs-addition { color: #aff5b4; background-color: #033a16; }
 .hljs-deletion { color: #ffdcd7; background-color: #67060c; }
+
+/* ---------- browser 内嵌浮窗（帧渲染 + 交互转发） ---------- */
+.browser-preview-float {
+  position: fixed;
+  z-index: 120;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel, #10263f);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 12px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+  font-size: 12px;
+  user-select: none;
+}
+.browser-preview-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  background: rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  cursor: grab;
+}
+.browser-preview-title:active { cursor: grabbing; }
+.browser-preview-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: #3fb950; flex: none;
+}
+.browser-preview-url {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim, #a8c3d9);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+}
+.browser-preview-page-title {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim, #a8c3d9);
+  opacity: 0.8;
+}
+.browser-preview-btn {
+  background: none;
+  border: none;
+  color: var(--text-dim, #a8c3d9);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  line-height: 1;
+}
+.browser-preview-btn:hover { background: rgba(255, 255, 255, 0.12); color: var(--text, #f1faee); }
+/* 关闭浮窗后右下角的胶囊入口：点击重新打开浮窗 */
+.browser-preview-reopen {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 119;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: var(--panel, #10263f);
+  color: var(--text-dim, #a8c3d9);
+  font-size: 17px;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+  transition: background 0.15s, color 0.15s;
+}
+.browser-preview-reopen:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text, #f1faee);
+}
+.browser-preview-frame {
+  flex: 1;
+  min-height: 0;
+  background: #111;
+  position: relative;
+  outline: none;
+  overflow: hidden;
+}
+.browser-preview-frame img {
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+  display: block;
+  cursor: crosshair;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+.browser-preview-empty {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #667;
+  font-size: 12px;
+}
+.browser-preview-inputbar {
+  display: flex;
+  gap: 6px;
+  padding: 6px 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.04);
+}
+.browser-preview-text {
+  flex: 1;
+  min-width: 0;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 6px;
+  color: var(--text, #f1faee);
+  padding: 4px 8px;
+  font-size: 12px;
+  outline: none;
+}
+.browser-preview-text:focus { border-color: var(--accent, #e63946); }

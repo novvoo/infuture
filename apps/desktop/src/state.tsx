@@ -58,6 +58,21 @@ interface AppApi {
   // 文件管理
   refreshFiles: () => Promise<void>;
   browseDir: (absPath: string) => Promise<import('./types').BrowseResult | null>;
+  // browser 内嵌浮窗
+  refreshBrowserPreview: () => Promise<void>;
+  sendBrowserInput: (input: {
+    type: 'click' | 'scroll' | 'type' | 'key' | 'drag' | 'nav';
+    x?: number;
+    y?: number;
+    x2?: number;
+    y2?: number;
+    dx?: number;
+    dy?: number;
+    text?: string;
+    dir?: 'back' | 'forward';
+  }) => Promise<void>;
+  closeBrowserPreview: () => void;
+  openBrowserPreview: () => void;
   openDir: (rel: string) => Promise<void>;
   openFile: (rel: string) => Promise<void>;
   saveFile: (rel: string, content: string) => Promise<void>;
@@ -129,6 +144,16 @@ interface AppState {
   channelStatus: ChannelStatus | null;
   /** 本地模型状态（下载 / 服务 / 自动注册）。 */
   localStatus: LocalModelStatus | null;
+  /** browser 内嵌浮窗（实时帧 + 交互转发）。 */
+  browserPreview: {
+    visible: boolean;
+    image?: string;
+    url?: string;
+    title?: string;
+    width?: number;
+    height?: number;
+    loading?: boolean;
+  };
   // 文件浏览器状态
   files: DirEntry[];
   fsPath: string;
@@ -233,6 +258,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [auth, setAuth] = useState<AuthInfo | null>(null);
   const [channelStatus, setChannelStatus] = useState<ChannelStatus | null>(null);
   const [localModelStatus, setLocalModelStatus] = useState<LocalModelStatus | null>(null);
+  const [browserPreview, setBrowserPreview] = useState<AppState['browserPreview']>({ visible: false });
   const [files, setFiles] = useState<DirEntry[]>([]);
   const [fsPath, setFsPath] = useState('');
   const [fsRoot, setFsRoot] = useState('');
@@ -455,6 +481,65 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return status ?? null as unknown as ChannelStatus;
   }, []);
 
+  // browser 内嵌浮窗：拉最新帧 / 转发交互 / 开关
+  const refreshBrowserPreview = useCallback(async () => {
+    const rpc = rpcRef.current;
+    if (!rpc) return;
+    const frame = (await rpc.call<{
+      image?: string;
+      url?: string;
+      title?: string;
+      width?: number;
+      height?: number;
+    } | null>('browser.preview')) ?? null;
+    setBrowserPreview((prev) =>
+      frame && frame.image
+        ? {
+            visible: prev.visible,
+            image: frame.image,
+            url: frame.url,
+            title: frame.title,
+            width: frame.width,
+            height: frame.height,
+            loading: false,
+          }
+        : { ...prev, loading: false },
+    );
+  }, []);
+
+  const openBrowserPreview = useCallback(() => {
+    setBrowserPreview((prev) => ({ ...prev, visible: true, loading: true }));
+    void refreshBrowserPreview();
+  }, [refreshBrowserPreview]);
+
+  const sendBrowserInput = useCallback(
+    async (input: {
+      type: 'click' | 'scroll' | 'type' | 'key' | 'drag' | 'nav';
+      x?: number;
+      y?: number;
+      x2?: number;
+      y2?: number;
+      dx?: number;
+      dy?: number;
+      text?: string;
+      dir?: 'back' | 'forward';
+    }) => {
+      const rpc = rpcRef.current;
+      if (!rpc) return;
+      try {
+        await rpc.call('browser.preview.input', input);
+      } catch {
+        // 输入失败（如标签已关闭）静默，下一帧会反映状态
+      }
+      void refreshBrowserPreview();
+    },
+    [refreshBrowserPreview],
+  );
+
+  const closeBrowserPreview = useCallback(() => {
+    setBrowserPreview((prev) => ({ ...prev, visible: false }));
+  }, []);
+
   useEffect(() => {
     const rpc = new DesktopRpc();
     rpcRef.current = rpc;
@@ -547,6 +632,34 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const { sessionId, event: ev } = n.params as { sessionId?: string; event: RunEvent };
       const sid = sessionId ?? currentSessionRef.current ?? '';
       if (!sid) return;
+      // browser / computer_use 网页分支 被调用 → 自动弹出内嵌浮窗并刷新帧。
+      // 放在缓存检查之前：页面刚加载（历史基线未就绪）时也不能漏掉浮窗。
+      const isBrowserLike =
+        (ev.type === 'tool_call' || ev.type === 'tool_result') && ev.name === 'browser';
+      const isCuWeb =
+        ev.type === 'tool_call' &&
+        ev.name === 'computer_use' &&
+        typeof ev.args === 'object' &&
+        ev.args !== null &&
+        typeof (ev.args as { action?: unknown }).action === 'string' &&
+        (['open_url', 'page_click', 'page_scroll', 'page_type', 'page_key', 'page_find'] as string[]).includes(
+          (ev.args as { action: string }).action,
+        );
+      if (isBrowserLike || isCuWeb) {
+        setBrowserPreview((prev) => ({ ...prev, visible: true, loading: true }));
+        if (ev.type === 'tool_result') {
+          // 工具结果后延迟刷新：导航（点击链接/跳转）需要时间加载，立即刷新截到旧帧。
+          // 单次延迟（非轮询），不与模型 run 抢 omp tab worker。
+          setTimeout(() => void refreshBrowserPreview(), 1200);
+        } else {
+          void refreshBrowserPreview();
+        }
+      } else if (ev.type === 'tool_result' && ev.name === 'computer_use') {
+        // computer_use 结果后延迟刷新：页面导航（open_url/page_click 跳转）需要时间加载，
+        // 立即刷新会截到旧页面帧（浮窗不更新）；延迟 1.2s 让导航 settle。
+        // 单次延迟（非轮询），不与模型 run 抢 omp tab worker。
+        setTimeout(() => void refreshBrowserPreview(), 1200);
+      }
       // 历史基线未就绪（如刷新后 ws 重连、事件先于 session.messages 返回）：暂存事件，
       // 由 loadMessages 就绪后按序重放——不做会话丢弃，切回时也能补上错过的增量。
       if (!loadedCacheRef.current.has(sid)) {
@@ -1143,7 +1256,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  const state: AppState = { connected, sessions, currentSessionId, messages, models, currentModel, tools, runLog, pendingApproval, busy, runId, doctor, settings, auth, channelStatus, localStatus: localModelStatus, files, fsPath, fsRoot, fileView, workers, workerLogs, goalTodos, goalEvents, loopStatus, loopRuns, loopFrontier, view };
+  const state: AppState = { connected, sessions, currentSessionId, messages, models, currentModel, tools, runLog, pendingApproval, busy, runId, doctor, settings, auth, channelStatus, localStatus: localModelStatus, browserPreview, files, fsPath, fsRoot, fileView, workers, workerLogs, goalTodos, goalEvents, loopStatus, loopRuns, loopFrontier, view };
   const api: AppApi = {
     sendMessage,
     stop,
@@ -1202,6 +1315,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     saveChannel,
     startChannel,
     stopChannel,
+    refreshBrowserPreview,
+    openBrowserPreview,
+    sendBrowserInput,
+    closeBrowserPreview,
   };
 
   return (

@@ -11,6 +11,7 @@ import { GoalsPanel } from './components/GoalsPanel';
 import { SettingsView } from './components/SettingsView';
 import { LocalModelsPanel } from './components/LocalModelsPanel';
 import { StatusBar } from './components/StatusBar';
+import { BrowserPreviewFloat } from './components/BrowserPreviewFloat';
 
 function Workbench() {
   const { view } = useAppState();
@@ -42,6 +43,7 @@ function Workbench() {
       </div>
       <StatusBar />
       <ApprovalCapsule />
+      <BrowserPreviewFloat />
     </div>
   );
 }
