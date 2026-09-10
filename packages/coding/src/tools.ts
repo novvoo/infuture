@@ -394,12 +394,12 @@ export function codingTools(client: CodingToolsClient | null, options: CodingToo
       },
     },
     {
-      def: toolDef('browser', '无头/真实浏览器控制：打开网页、执行 JS、读取页面（直调内置 BrowserTool）', {
+      def: toolDef('browser', '无头浏览器控制：打开网页、执行 JS、读取页面（直调内置 BrowserTool）。必须先用 open 再 run；run 的 code 在 Node 环境执行，访问页面 DOM 必须用 tab.evaluate(fn)（document 在 evaluate 回调里可用）或 tab 的专用方法。默认 headless 静默，页面会被自动内嵌到应用内的浮窗实时显示', {
         type: 'object',
         properties: {
           action: { type: 'string', description: 'open | close | run' },
           url: { type: 'string', description: '要打开的 URL（action=open）' },
-          code: { type: 'string', description: '在页面上下文中执行的 JS 主体（action=run）' },
+          code: { type: 'string', description: '要执行的 JS 主体（action=run）。在 Node 侧运行，页面操作必须用 tab.evaluate(() => document…) / tab.click(sel) / tab.observe() 等，禁止直接写 document/window（未定义）' },
           name: { type: 'string', description: '标签页 id（默认 main）' },
           timeout: { type: 'number', description: '超时秒数' },
           wait_until: { type: 'string', description: "load | domcontentloaded | networkidle0 | networkidle2" },
@@ -407,7 +407,15 @@ export function codingTools(client: CodingToolsClient | null, options: CodingToo
         },
         required: ['action'],
       }),
-      guidelines: ['browser 直调内置 browser 工具（Puppeteer 驱动的浏览器控制）'],
+      guidelines: [
+        'browser 三步用法：1) 先 action=open（带 url）打开标签页；2) 用 action=run 执行 JS——code 在 Node 环境运行，DOM 一律走 tab.evaluate(fn)（例：tab.evaluate(() => ({ title: document.title, text: document.body.innerText.slice(0,2000) }))），或 tab.observe() 读无障碍树、tab.click(selector)/tab.type(selector,text)/tab.waitFor(selector) 交互、tab.extract() 提取正文、tab.screenshot() 截图；3) 结束 action=close。',
+        '禁止在 run 的 code 里直接写 document/window 等浏览器全局（Node 环境无定义，会报 document is not defined）；要用页面 DOM 先 tab.evaluate。',
+        '点击链接后必须验证导航结果：用 tab.url 或 tab.waitForUrl(pattern) 检查当前标签 URL 是否变化，不要假设点击成功。',
+        '新标签陷阱：target="_blank" 或 target=_blank 的链接（搜索结果、外链常见）点击后在新标签打开，当前标签 URL/title 不变，看起来"没响应"。处理：先在 tab.evaluate 里读 a.target；若为 _blank，不要用 a.click()，改为同标签导航——tab.evaluate(() => { location.href = a.href }) 或先读出 href 再 tab.open(href)（同一 name 复用标签），导航后验证 tab.url。',
+        'a.click() 在 tab.evaluate 里可能触发导航中断（evaluate 上下文随页面销毁，返回值异常）——需要点击时优先用 tab.click(selector) 或如上同标签导航。',
+        'open/run 期间页面会自动内嵌到应用右下角的浮窗实时显示；用户可在浮窗里点击/滚动/输入（事件转发回同一页面实例）。',
+        'open 后标签页可跨多次 run 复用；导航后元素失效需重新 observe。',
+      ],
       handler: (args) => {
         const { action, url, code, name, timeout, wait_until, viewport } = (args ?? {}) as Record<string, unknown>;
         const params: Record<string, unknown> = { action };

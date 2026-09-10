@@ -413,6 +413,23 @@ export class ServerSession {
         await this.engine.files.rename(root, String(p.from ?? ''), String(p.to ?? ''));
         return { ok: true };
       }
+      case METHODS.BrowserPreview: {
+        return await this.engine.browserPreview();
+      }
+      case METHODS.BrowserPreviewInput: {
+        const input = p as {
+          type?: 'click' | 'scroll' | 'type' | 'key' | 'drag';
+          x?: number;
+          y?: number;
+          x2?: number;
+          y2?: number;
+          dx?: number;
+          dy?: number;
+          text?: string;
+        };
+        if (!input?.type) throw new Error('browser.preview.input: type required');
+        return await this.engine.browserPreviewInput(input as never);
+      }
       case METHODS.Doctor: {
         let codingOk = false;
         let codingPath: string | null = null;

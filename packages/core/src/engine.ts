@@ -28,6 +28,29 @@ import { defaultConfigDir, generateId } from './utils/id.js';
 import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs/promises';
+
+/** browser 内嵌浮窗的一帧（截图 base64 + 页面信息，坐标按页面 CSS 像素换算）。 */
+export interface BrowserPreviewFrame {
+  image: string;
+  url: string;
+  title: string;
+  width: number;
+  height: number;
+  ts: number;
+}
+
+/** 浮窗交互转发请求（坐标均为页面 CSS 像素；x/y 相对页面左上角）。 */
+export interface BrowserPreviewInput {
+  type: 'click' | 'scroll' | 'type' | 'key' | 'drag' | 'nav';
+  x?: number;
+  y?: number;
+  x2?: number;
+  y2?: number;
+  dx?: number;
+  dy?: number;
+  text?: string;
+  dir?: 'back' | 'forward';
+}
 import { inloop } from './agent/run-loop.js';
 import type { RunEventCallback } from './agent/events.js';
 import { defaultAgentConfig } from '@infuture/types';
@@ -207,7 +230,101 @@ export class Engine {
     registry.register(spawnWorkersTool(this.workerSpawner));
     registry.register(listWorkersTool(this.workerLister));
     // 桌面 GUI 控制（Open Computer Use CLI；macOS 需授权 Accessibility/Screen Recording）
-    registry.register(computerUseTool());
+    registry.register(
+      computerUseTool({
+        // computer_use 网页分支 → 内嵌浏览器（browser 工具 + 应用内浮窗），不打开外部 Chrome
+        embeddedBrowser: {
+          open: async (url) => this.coding.call('browser', { action: 'open', url, timeout: 20 }),
+          input: (input) => this.browserPreviewInput(input),
+          // OCU 风格：get_app_state app=__embedded__ → 内嵌页面无障碍树（element_index = observe id）
+          // 注意：includeAll 树可能极大（百度等页面数千节点），必须截断返回，否则 run 输出被截断导致 JSON 解析失败。
+          observe: async (opts?: { maxTreeNodes?: number; maxTreeDepth?: number }) => {
+            const cap = Math.max(1, Math.min(opts?.maxTreeNodes ?? 200, 800));
+            const code = `const obs = await tab.observe({ includeAll: true }); JSON.stringify({ url: obs.url, title: obs.title, elements: (obs.elements || []).slice(0, ${cap}) })`;
+            const res = (await this.coding.call('browser', { action: 'run', name: 'main', code }, 20000)) as {
+              content?: Array<{ type?: string; text?: string }>;
+              isError?: boolean;
+            };
+            const text = res?.isError ? '' : extractPartialText(res);
+            if (text) {
+              try {
+                const info = JSON.parse(text) as { url?: string; title?: string; elements?: unknown[] };
+                return { url: String(info.url ?? ''), title: String(info.title ?? ''), elements: Array.isArray(info.elements) ? info.elements : [] };
+              } catch {
+                // 树解析失败（截断/超限）——降级：只探测标签是否存活，让上层报更准确的错误
+              }
+            }
+            // 区分"标签不存在"与"页面树过大/解析失败"：轻量探测当前标签 URL
+            try {
+              const probe = (await this.coding.call(
+                'browser',
+                { action: 'run', name: 'main', code: `tab.url()`, timeout: 20 },
+                10000,
+              )) as { content?: Array<{ type?: string; text?: string }>; isError?: boolean };
+              const probeText = probe?.isError ? '' : extractPartialText(probe);
+              if (probeText && /^https?:\/\//i.test(probeText.trim())) {
+                return { url: probeText.trim(), title: '', elements: [] };
+              }
+            } catch {
+              // fallthrough
+            }
+            return null;
+          },
+          // 定向查询：CSS selector → 匹配元素列表（轻量，不加载全量无障碍树）
+          find: async (selector, limit = 20) => {
+            const cap = Math.max(1, Math.min(limit, 50));
+            const sel = JSON.stringify(selector);
+            const code = `const list = await tab.evaluate((s, c) => { const els = [...document.querySelectorAll(s)].slice(0, c); return els.map((el, i) => ({ i, tag: (el.tagName || '').toLowerCase(), text: (el.textContent || '').trim().slice(0, 120), href: el.href || '', target: el.target || '' })); }, ${sel}, ${cap}); JSON.stringify(list)`;
+            const res = (await this.coding.call('browser', { action: 'run', name: 'main', code }, 15000)) as {
+              content?: Array<{ type?: string; text?: string }>;
+              isError?: boolean;
+            };
+            const t = res?.isError ? '' : extractPartialText(res);
+            if (!t) return [];
+            try {
+              const arr = JSON.parse(t) as Array<Record<string, unknown>>;
+              return Array.isArray(arr) ? arr : [];
+            } catch {
+              return [];
+            }
+          },
+          // 定向点击：selector+index 点击匹配元素；target=_blank 自动改同标签导航（避免"点了没跳转"）。
+          // 点击/导航会销毁 evaluate 上下文，忽略导航中断（只要执行了点击/跳转即算成功）。
+          // 返回前等导航启动窗口：立即返回会让前端在 tool_result 时截到旧页面帧（浮窗不更新）。
+          clickSelector: async (selector, index) => {
+            const sel = JSON.stringify(selector);
+            const i = Math.max(0, Number(index) || 0);
+            const code = `try { await tab.evaluate((s, n) => { const el = document.querySelectorAll(s)[n]; if (!el) return "no-match"; if (el.target === '_blank' || el.target === 'blank') { const href = el.href || el.getAttribute('href') || ''; if (href) location.href = href; } else { el.click(); } return "clicked"; }, ${sel}, ${i}); } catch (e) {} await new Promise(r => setTimeout(r, 1500)); "ok"`;
+            const res = (await this.coding.call('browser', { action: 'run', name: 'main', code }, 20000)) as {
+              content?: Array<{ type?: string; text?: string }>;
+              isError?: boolean;
+            };
+            const t = extractPartialText(res);
+            const failed = res?.isError || /no-match|执行失败|is not alive/i.test(t);
+            return failed ? { ok: false, error: t || '无匹配元素' } : { ok: true };
+          },
+          // OCU 风格：click / type / fill 由 element_index（observe id，number）→ tab.id(id) 元素 handle → CDP
+          // 注意：`await tab.id(n).click()` 会被解析为 await (tab.id(n).click())（在 Promise 上取 click，undefined），
+          // 必须 `await (await tab.id(n)).click()` 先取到 handle。
+          elementAction: async (op, id, text) => {
+            const n = Number(id);
+            const code =
+              op === 'click'
+                ? `await (await tab.id(${n})).click(); "ok"`
+                : op === 'type'
+                  ? `const h = await tab.id(${n}); await h.click(); await h.type(${JSON.stringify(text ?? '')}); "ok"`
+                  : `await (await tab.id(${n})).fill(${JSON.stringify(text ?? '')}); "ok"`;
+            const res = (await this.coding.call('browser', { action: 'run', name: 'main', code }, 15000)) as {
+              content?: Array<{ type?: string; text?: string }>;
+              isError?: boolean;
+            };
+            const t = extractPartialText(res);
+            const failed = res?.isError || /执行失败|is not alive/i.test(t);
+            return failed ? { ok: false, error: t || '内嵌浏览器标签不可用' } : { ok: true };
+          },
+        },
+      }),
+    );
     // 编程工具：inloop 经 coding tools 服务直调编程引擎（懒启动 bun 进程）
     registry.registerAll(
       codingTools(this.coding, {
@@ -335,6 +452,93 @@ export class Engine {
    * 并真实调用一次 web_search 返回结果，供前端搜索配置窗口「验证」。
    * 注入作用于运行中的 coding 服务进程，验证即应用，无需重启桌面端。
    */
+  /**
+   * browser 内嵌浮窗：拉取当前标签的实时帧（截图 + 页面信息）。
+   * 无已打开标签时返回 null（前端不显示浮窗）。
+   */
+  async browserPreview(): Promise<BrowserPreviewFrame | null> {
+    try {
+      const res = (await this.coding.call(
+        'browser',
+        {
+          action: 'run',
+          name: 'main',
+          code: [
+            `const dest = "/tmp/infuture-browser-preview-" + Date.now() + ".png";`,
+            `const s = await tab.screenshot({ silent: true, save: dest });`,
+            `const info = await tab.evaluate(() => ({ url: location.href, title: document.title, w: innerWidth, h: innerHeight }));`,
+            `({ dest: s.dest, url: info.url, title: info.title, w: info.w, h: info.h })`,
+          ].join('\n'),
+        },
+        15000,
+      )) as { content?: Array<{ type?: string; text?: string }>; isError?: boolean };
+      if (res?.isError) return null;
+      const text = extractPartialText(res);
+      if (!text) return null;
+      const info = JSON.parse(text) as { dest?: string; url?: string; title?: string; w?: number; h?: number };
+      if (!info.dest) return null;
+      const buf = await fs.readFile(info.dest);
+      await fs.unlink(info.dest).catch(() => {});
+      return {
+        image: buf.toString('base64'),
+        url: String(info.url ?? ''),
+        title: String(info.title ?? ''),
+        width: Number(info.w) || 1280,
+        height: Number(info.h) || 720,
+        ts: Date.now(),
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /** browser 浮窗交互转发：浮窗里的点击/滚动/键盘 → CDP 输入（作用于同一页面实例）。 */
+  async browserPreviewInput(input: BrowserPreviewInput): Promise<{ ok: boolean; error?: string }> {
+    const { type, x, y, text, dx, dy, x2, y2 } = input ?? {};
+    let code: string;
+    switch (type) {
+      case 'click':
+        code = `await page.mouse.click(${Math.round(Number(x) || 0)}, ${Math.round(Number(y) || 0)}); "ok"`;
+        break;
+      case 'scroll':
+        code = `await page.mouse.wheel({ deltaX: ${Number(dx) || 0}, deltaY: ${Number(dy) || 0} }); "ok"`;
+        break;
+      case 'type':
+        code = `await page.keyboard.type(${JSON.stringify(String(text ?? ''))}); "ok"`;
+        break;
+      case 'key':
+        code = `await page.keyboard.press(${JSON.stringify(String(text ?? 'Enter'))}); "ok"`;
+        break;
+      case 'drag':
+        code = [
+          `await page.mouse.move(${Math.round(Number(x) || 0)}, ${Math.round(Number(y) || 0)});`,
+          `await page.mouse.down();`,
+          `await page.mouse.move(${Math.round(Number(x2 ?? x) || 0)}, ${Math.round(Number(y2 ?? y) || 0)}, { steps: 8 });`,
+          `await page.mouse.up(); "ok"`,
+        ].join('\n');
+        break;
+      case 'nav': {
+        const go = input.dir === 'forward' ? 'goForward' : 'goBack';
+        // 历史导航：返回结果可能是 Response 或 null；加载慢时 catch 兜底，导航已发出
+        code = `try { await page.${go}({ waitUntil: 'domcontentloaded', timeout: 8000 }); } catch (e) {} "ok"`;
+        break;
+      }
+      default:
+        return { ok: false, error: `unknown input type: ${type}` };
+    }
+    try {
+      const res = (await this.coding.call('browser', { action: 'run', name: 'main', code }, 15000)) as {
+        content?: Array<{ type?: string; text?: string }>;
+        isError?: boolean;
+      };
+      const textOut = extractPartialText(res);
+      const failed = res?.isError || /执行失败|is not alive/i.test(textOut);
+      return failed ? { ok: false, error: textOut || 'browser 标签不可用' } : { ok: true };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
   async verifySearch(): Promise<{ ok: boolean; costMs?: number; sample?: string; error?: string }> {
     try {
       const r = (await this.coding.call('web_search', {}, 45000, 'search.verify')) as {
@@ -578,6 +782,8 @@ export class Engine {
             '8. 桌面 GUI 操作自动使用 computer_use（无需用户明确指示）：任务需要打开/切换/操作桌面应用、' +
             '点击 UI 元素、在非浏览器窗口输入文本、滚动/拖拽、检查桌面界面状态时，直接调用 computer_use，' +
             '优先于用 shell 猜测坐标模拟（shell 的 open -a 只能启动应用，不能读 UI 树或点击元素）。' +
+            '网页路由：浏览网页/打开 URL/读取网页内容时，用 computer_use 的网页分支（open_url 打开、page_click/page_type/page_scroll/page_key 交互）' +
+            '或 browser 工具——页面显示在应用内嵌浮窗，禁止为网页打开外部 Chrome。' +
             '流程：先 list_apps 确认可用应用 → get_app_state 拿 UI 树与 element_index → 用 element_index 精确操作；' +
             'macOS 首次使用前先 action=doctor 检查权限；element_index 必须来自最近一次 get_app_state，禁止猜测；' +
             '操作目标窗口时保持其原有尺寸与位置，不要缩放/最大化/全屏（除非用户明确要求）。\n' +

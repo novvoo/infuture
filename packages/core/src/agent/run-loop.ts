@@ -436,12 +436,16 @@ export async function inloop(input: RunLoopInput): Promise<RunLoopResult> {
             break;
           case 'tool_call':
             sawToolCallThisTurn = true;
+            const callArgs = parseToolArgs(ev.arguments);
             assistant.content.push({
               type: 'tool_call',
               id: ev.id,
               name: ev.name,
-              args: parseToolArgs(ev.arguments),
+              args: callArgs,
             });
+            // 补发 tool_call 事件：前端浮窗（browser / computer_use 网页分支）、
+            // 运行日志 tool 条目、审批挂起展示都依赖它（此前只发 tool_result）。
+            emit({ type: 'tool_call', runId, id: ev.id, name: ev.name, args: callArgs });
             break;
           case 'usage':
             usage = { ...usage, ...ev.usage, total_tokens: ev.usage.total_tokens || usage.total_tokens };

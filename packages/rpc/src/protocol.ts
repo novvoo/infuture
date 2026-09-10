@@ -68,6 +68,8 @@ export const METHODS = {
   ChannelStart: 'channel.start',
   ChannelStop: 'channel.stop',
   Doctor: 'doctor',
+  BrowserPreview: 'browser.preview',
+  BrowserPreviewInput: 'browser.preview.input',
   FsList: 'fs.list',
   FsBrowse: 'fs.browse',
   FsRead: 'fs.read',
