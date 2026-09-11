@@ -57,12 +57,95 @@ const SEARCH_PROVIDER_LABELS: Record<string, string> = {
 };
 
 /** 从工具服务返回的 AgentToolResult 提取“实际命中的搜索引擎”元信息（web_search 等搜索类工具）。 */
-function extractEngineMeta(result: unknown): { engine?: string; model?: string } {
-  const r = result as { details?: { response?: { provider?: string; model?: string } } } | undefined;
+function extractEngineMeta(result: unknown): { engine?: string; model?: string } {  const r = result as { details?: { response?: { provider?: string; model?: string } } } | undefined;
   const response = r?.details?.response;
   if (!response || !response.provider || response.provider === 'none') return {};
   const engine = SEARCH_PROVIDER_LABELS[response.provider] ?? response.provider;
   return { engine, model: response.model };
+}
+
+/**
+ * 浏览器兜底搜索引擎（web_search 全 provider 失败时启用）：
+ * 按顺序尝试，第一个能提取到结果的引擎生效（哪个正常用哪个）。
+ * 均为普通 HTTP 页面（不依赖搜索 API 凭据），走内嵌 headless 浏览器；
+ * 提取用 CSS 选择器读结果列表（title / url / snippet）。
+ */
+const BROWSER_FALLBACK_ENGINES: Array<{
+  id: string;
+  label: string;
+  url: (q: string) => string;
+  code: (limit: number) => string;
+}> = [
+  {
+    id: 'bing',
+    label: 'Bing',
+    url: (q) => `https://www.bing.com/search?q=${encodeURIComponent(q)}&count=10`,
+    code: (limit) =>
+      `const items = await tab.evaluate(() => { const out = []; for (const el of document.querySelectorAll('.b_algo')) { const a = el.querySelector('h2 a'); if (!a) continue; const t = (a.textContent || '').trim(); if (!t) continue; const s = el.querySelector('.b_caption p, .b_lineclamp2, .b_lineclamp3, .b_lineclamp4, p'); out.push({ title: t, url: a.href || '', snippet: ((s && s.textContent) || '').trim().slice(0, 300) }); if (out.length >= ${limit}) break; } return out; }); JSON.stringify(items)`,
+  },
+  {
+    id: 'duckduckgo',
+    label: 'DuckDuckGo',
+    url: (q) => `https://html.duckduckgo.com/html/?q=${encodeURIComponent(q)}`,
+    code: (limit) =>
+      `const items = await tab.evaluate(() => { const out = []; for (const el of document.querySelectorAll('.result')) { const a = el.querySelector('a.result__a'); if (!a) continue; const t = (a.textContent || '').trim(); if (!t) continue; const s = el.querySelector('.result__snippet'); const raw = a.href || ''; const m = raw.match(/uddg=([^&]+)/); const url = m ? decodeURIComponent(m[1]) : raw; out.push({ title: t, url, snippet: ((s && s.textContent) || '').trim().slice(0, 300) }); if (out.length >= ${limit}) break; } return out; }); JSON.stringify(items)`,
+  },
+  {
+    id: 'google',
+    label: 'Google',
+    url: (q) => `https://www.google.com/search?q=${encodeURIComponent(q)}&num=10`,
+    code: (limit) =>
+      `const items = await tab.evaluate(() => { const out = []; for (const el of document.querySelectorAll('div.tF2Cxc, div.g')) { const a = el.querySelector('h3 a'); if (!a) continue; const t = (a.textContent || '').trim(); if (!t) continue; const s = el.querySelector('span.aCOpRe, div.VwiC3b'); out.push({ title: t, url: a.href || '', snippet: ((s && s.textContent) || '').trim().slice(0, 300) }); if (out.length >= ${limit}) break; } return out; }); JSON.stringify(items)`,
+  },
+  {
+    id: 'baidu',
+    label: 'Baidu',
+    url: (q) => `https://www.baidu.com/s?wd=${encodeURIComponent(q)}`,
+    code: (limit) =>
+      `const items = await tab.evaluate(() => { const out = []; for (const el of document.querySelectorAll('#content_left .result, #content_left .c-container')) { const a = el.querySelector('h3 a'); if (!a) continue; const t = (a.textContent || '').trim(); if (!t) continue; const s = el.querySelector('.c-abstract, span'); out.push({ title: t, url: a.href || '', snippet: ((s && s.textContent) || '').trim().slice(0, 300) }); if (out.length >= ${limit}) break; } return out; }); JSON.stringify(items)`,
+  },
+];
+
+/** 浏览器兜底搜索：逐引擎尝试（open → evaluate 提取），第一个出结果的生效；全部失败返回 null。 */
+async function browserSearchFallback(
+  client: CodingToolsClient | null,
+  query: string,
+  limit: number,
+): Promise<{ engine: string; items: Array<{ title: string; url: string; snippet: string }> } | null> {
+  for (const eng of BROWSER_FALLBACK_ENGINES) {
+    try {
+      const openRes = await callTool(client, 'browser', {
+        action: 'open',
+        name: 'main',
+        url: eng.url(query),
+        wait_until: 'domcontentloaded',
+        timeout: 12,
+      });
+      if (openRes.is_error) continue;
+      const runRes = await callTool(client, 'browser', {
+        action: 'run',
+        name: 'main',
+        code: eng.code(limit),
+        timeout: 15,
+      });
+      if (runRes.is_error) continue;
+      const text = typeof runRes.result === 'string' ? runRes.result : JSON.stringify(runRes.result);
+      const m = text.match(/\[[\s\S]*\]/);
+      if (!m) continue;
+      const parsed = JSON.parse(m[0]) as Array<{ title?: string; url?: string; snippet?: string }>;
+      const items = (Array.isArray(parsed) ? parsed : [])
+        .filter((it) => it && typeof it.title === 'string' && it.title.trim())
+        .map((it) => ({
+          title: String(it.title).trim().slice(0, 200),
+          url: String(it.url ?? ''),
+          snippet: String(it.snippet ?? '').trim().slice(0, 300),
+        }));
+      if (items.length > 0) return { engine: eng.label, items };
+    } catch {
+      // 该引擎不可用（网络/反爬/解析失败）→ 尝试下一个
+    }
+  }
+  return null;
 }
 
 /** 把工具服务返回的 AgentToolResult 转成文本结果。 */
@@ -441,8 +524,8 @@ export function codingTools(client: CodingToolsClient | null, options: CodingToo
         },
         required: ['query'],
       }),
-      guidelines: ['web_search 直调内置 web_search 工具', '默认 auto：自动轮换可用 provider；多 provider 全部失败才报 All web search providers failed', '指定 provider 需先配置对应凭据（如 EXA_API_KEY / JINA_API_KEY / PERPLEXITY_API_KEY 环境变量或 auth）'],
-      handler: (args) => {
+      guidelines: ['web_search 直调内置 web_search 工具', '默认 auto：自动轮换可用 provider；多 provider 全部失败才报 All web search providers failed', '指定 provider 需先配置对应凭据（如 EXA_API_KEY / JINA_API_KEY / PERPLEXITY_API_KEY 环境变量或 auth）', 'provider 链全部失败时自动降级浏览器搜索兜底（Bing → DuckDuckGo → Google → Baidu，哪个正常用哪个，结果标注 engine: browser:xxx）'],
+      handler: async (args) => {
         const { query, provider, recency, limit, max_tokens, num_search_results } = (args ?? {}) as Record<string, unknown>;
         if (!query) return Promise.resolve({ result: 'web_search: missing `query`', is_error: true });
         const params: Record<string, unknown> = { query };
@@ -452,7 +535,20 @@ export function codingTools(client: CodingToolsClient | null, options: CodingToo
         if (max_tokens) params.max_tokens = max_tokens;
         if (num_search_results) params.num_search_results = num_search_results;
         // 真实联网搜索（多来源抓取）常超 15s，给足 60s 避免"成功却误报超时"。
-        return callToolWithTimeout(client, 'web_search', params, 60_000);
+        const direct = await callToolWithTimeout(client, 'web_search', params, 60_000);
+        if (!direct.is_error) return direct;
+        // 搜索 API provider 链全部失败 → 浏览器兜底（多引擎轮换，哪个正常用哪个）
+        const fb = await browserSearchFallback(client, String(query), typeof limit === 'number' ? limit : 8);
+        if (fb) {
+          const lines = fb.items.map(
+            (it, i) => `${i + 1}. ${it.title}\n   ${it.url}\n   ${it.snippet || '(无摘要)'}`,
+          );
+          return {
+            result: `[engine: browser:${fb.engine}]（搜索 API provider 全部失败，已自动降级浏览器搜索）\n${lines.join('\n\n')}`,
+            is_error: false,
+          };
+        }
+        return direct;
       },
     },
     {
