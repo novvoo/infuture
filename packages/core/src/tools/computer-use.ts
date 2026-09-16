@@ -107,6 +107,7 @@ export interface ComputerUseToolOptions {
       dx?: number;
       dy?: number;
       text?: string;
+      via?: 'computer_use';
     }) => Promise<{ ok: boolean; error?: string }>;
     /** OCU 风格：返回内嵌页面无障碍树（element_index = observe id）。maxTreeNodes 截断元素数。 */
     observe?: (opts?: { maxTreeNodes?: number; maxTreeDepth?: number }) => Promise<{ url: string; title: string; elements: unknown[] } | null>;
@@ -251,7 +252,7 @@ export function computerUseTool(options: ComputerUseToolOptions = {}): AgentTool
             }
             // 坐标点击
             if (argObj.x !== undefined && argObj.y !== undefined) {
-              const r = await eb.input({ type: 'click', x: Number(argObj.x), y: Number(argObj.y) });
+              const r = await eb.input({ type: 'click', x: Number(argObj.x), y: Number(argObj.y), via: 'computer_use' });
               return r.ok
                 ? { result: `page_click(${argObj.x},${argObj.y}) 已发送`, is_error: false }
                 : { result: `page_click 失败: ${r.error ?? ''}`, is_error: true };
@@ -259,19 +260,19 @@ export function computerUseTool(options: ComputerUseToolOptions = {}): AgentTool
             return { result: 'page_click 需要 selector+index（定向点击）或 x/y（坐标点击）', is_error: true };
           }
           if (action === 'page_scroll') {
-            const r = await eb.input({ type: 'scroll', dx: Number(argObj.dx), dy: Number(argObj.dy) });
+            const r = await eb.input({ type: 'scroll', dx: Number(argObj.dx), dy: Number(argObj.dy), via: 'computer_use' });
             return r.ok
               ? { result: `page_scroll(${argObj.dx},${argObj.dy}) 已发送`, is_error: false }
               : { result: `page_scroll 失败: ${r.error ?? ''}`, is_error: true };
           }
           if (action === 'page_type') {
-            const r = await eb.input({ type: 'type', text: String(argObj.text ?? '') });
+            const r = await eb.input({ type: 'type', text: String(argObj.text ?? ''), via: 'computer_use' });
             return r.ok
               ? { result: 'page_type 已发送', is_error: false }
               : { result: `page_type 失败: ${r.error ?? ''}`, is_error: true };
           }
           if (action === 'page_key') {
-            const r = await eb.input({ type: 'key', text: String(argObj.key ?? 'Enter') });
+            const r = await eb.input({ type: 'key', text: String(argObj.key ?? 'Enter'), via: 'computer_use' });
             return r.ok
               ? { result: `page_key(${argObj.key}) 已发送`, is_error: false }
               : { result: `page_key 失败: ${r.error ?? ''}`, is_error: true };
@@ -323,7 +324,7 @@ export function computerUseTool(options: ComputerUseToolOptions = {}): AgentTool
                 : { result: `click 失败: ${r.error ?? ''}`, is_error: true };
             }
             if (a.x !== undefined && a.y !== undefined) {
-              const r = await eb.input({ type: 'click', x: Number(a.x), y: Number(a.y) });
+              const r = await eb.input({ type: 'click', x: Number(a.x), y: Number(a.y), via: 'computer_use' });
               return r.ok
                 ? { result: `click(${a.x},${a.y}) 已发送`, is_error: false }
                 : { result: `click 失败: ${r.error ?? ''}`, is_error: true };
@@ -338,7 +339,7 @@ export function computerUseTool(options: ComputerUseToolOptions = {}): AgentTool
                 ? { result: `type_text 已发送到 ${a.element_index}`, is_error: false }
                 : { result: `type_text 失败: ${r.error ?? ''}`, is_error: true };
             }
-            const r = await eb.input({ type: 'type', text: String(a.text ?? '') });
+            const r = await eb.input({ type: 'type', text: String(a.text ?? ''), via: 'computer_use' });
             return r.ok
               ? { result: 'type_text 已发送', is_error: false }
               : { result: `type_text 失败: ${r.error ?? ''}`, is_error: true };
@@ -348,7 +349,7 @@ export function computerUseTool(options: ComputerUseToolOptions = {}): AgentTool
             const dir = String(a.direction ?? 'down');
             const dy = dir === 'up' ? -300 : dir === 'down' ? 300 : 0;
             const dx = dir === 'left' ? -300 : dir === 'right' ? 300 : 0;
-            const r = await eb.input({ type: 'scroll', dx, dy });
+            const r = await eb.input({ type: 'scroll', dx, dy, via: 'computer_use' });
             return r.ok
               ? { result: `scroll(${dir}) 已发送`, is_error: false }
               : { result: `scroll 失败: ${r.error ?? ''}`, is_error: true };

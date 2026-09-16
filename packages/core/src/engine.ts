@@ -50,6 +50,8 @@ export interface BrowserPreviewInput {
   dy?: number;
   text?: string;
   dir?: 'back' | 'forward';
+  /** 来源为 computer_use：先注入/移动可见虚拟光标再执行输入（CDP 输入不渲染系统光标，浮窗里看不到鼠标） */
+  via?: 'computer_use';
 }
 import { inloop } from './agent/run-loop.js';
 import type { RunEventCallback } from './agent/events.js';
@@ -234,14 +236,21 @@ export class Engine {
       computerUseTool({
         // computer_use 网页分支 → 内嵌浏览器（browser 工具 + 应用内浮窗），不打开外部 Chrome
         embeddedBrowser: {
-          open: async (url) => this.coding.call('browser', { action: 'open', url, timeout: 20 }),
+          // 打开页面后立即把虚拟光标移入视口中心——computer_use 从打开 browser 起浮窗就能看到鼠标，
+          // 而不是等到第一次滚动/点击才出现
+          open: async (url) => {
+            const res = await this.coding.call('browser', { action: 'open', url, timeout: 20 });
+            await new Promise((r) => setTimeout(r, 1200));
+            await this.browserCursorMove();
+            return res;
+          },
           input: (input) => this.browserPreviewInput(input),
           // OCU 风格：get_app_state app=__embedded__ → 内嵌页面无障碍树（element_index = observe id）
           // 注意：includeAll 树可能极大（百度等页面数千节点），必须截断返回，否则 run 输出被截断导致 JSON 解析失败。
           observe: async (opts?: { maxTreeNodes?: number; maxTreeDepth?: number }) => {
             const cap = Math.max(1, Math.min(opts?.maxTreeNodes ?? 200, 800));
             const code = `const obs = await tab.observe({ includeAll: true }); JSON.stringify({ url: obs.url, title: obs.title, elements: (obs.elements || []).slice(0, ${cap}) })`;
-            const res = (await this.coding.call('browser', { action: 'run', name: 'main', code }, 20000)) as {
+            const res = (await this.browserRun(code, 20000)) as {
               content?: Array<{ type?: string; text?: string }>;
               isError?: boolean;
             };
@@ -275,7 +284,7 @@ export class Engine {
             const cap = Math.max(1, Math.min(limit, 50));
             const sel = JSON.stringify(selector);
             const code = `const list = await tab.evaluate((s, c) => { const els = [...document.querySelectorAll(s)].slice(0, c); return els.map((el, i) => ({ i, tag: (el.tagName || '').toLowerCase(), text: (el.textContent || '').trim().slice(0, 120), href: el.href || '', target: el.target || '' })); }, ${sel}, ${cap}); JSON.stringify(list)`;
-            const res = (await this.coding.call('browser', { action: 'run', name: 'main', code }, 15000)) as {
+            const res = (await this.browserRun(code, 15000)) as {
               content?: Array<{ type?: string; text?: string }>;
               isError?: boolean;
             };
@@ -291,11 +300,33 @@ export class Engine {
           // 定向点击：selector+index 点击匹配元素；target=_blank 自动改同标签导航（避免"点了没跳转"）。
           // 点击/导航会销毁 evaluate 上下文，忽略导航中断（只要执行了点击/跳转即算成功）。
           // 返回前等导航启动窗口：立即返回会让前端在 tool_result 时截到旧页面帧（浮窗不更新）。
+          // 点击前先把虚拟光标移到元素中心（自动形态：链接→手型；真实 mouse.move 产生 hover）。
           clickSelector: async (selector, index) => {
             const sel = JSON.stringify(selector);
             const i = Math.max(0, Number(index) || 0);
-            const code = `try { await tab.evaluate((s, n) => { const el = document.querySelectorAll(s)[n]; if (!el) return "no-match"; if (el.target === '_blank' || el.target === 'blank') { const href = el.href || el.getAttribute('href') || ''; if (href) location.href = href; } else { el.click(); } return "clicked"; }, ${sel}, ${i}); } catch (e) {} await new Promise(r => setTimeout(r, 1500)); "ok"`;
-            const res = (await this.coding.call('browser', { action: 'run', name: 'main', code }, 20000)) as {
+            // 1) 探测元素中心与 target
+            const probeCode = `const r = await tab.evaluate((s, n) => { const el = document.querySelectorAll(s)[n]; if (!el) return "no-match"; const b = el.getBoundingClientRect(); return JSON.stringify({ x: b.left + b.width / 2, y: b.top + b.height / 2, blank: el.target === '_blank' || el.target === 'blank' }); }, ${sel}, ${i}); r`;
+            const probe = (await this.browserRun(probeCode, 15000)) as {
+              content?: Array<{ type?: string; text?: string }>;
+              isError?: boolean;
+            };
+            const probeText = probe?.isError ? '' : extractPartialText(probe);
+            if (!probeText || probeText.includes('no-match')) return { ok: false, error: probeText || '无匹配元素' };
+            let center: { x: number; y: number; blank?: boolean };
+            try {
+              center = JSON.parse(probeText) as typeof center;
+            } catch {
+              return { ok: false, error: '元素位置解析失败' };
+            }
+            // 2) 虚拟光标移到元素中心（自动形态 + hover），动画 450ms
+            await this.browserCursorMove(center.x - 4, center.y - 4);
+            // 3) 执行点击（保留 _blank → 同标签导航语义）
+            const clickCode = [
+              `try { await tab.evaluate((s, n) => { const el = document.querySelectorAll(s)[n]; if (!el) return;`,
+              `  if (el.target === '_blank' || el.target === 'blank') { const href = el.href || el.getAttribute('href') || ''; if (href) location.href = href; } else { el.click(); } }, ${sel}, ${i}); } catch (e) {}`,
+              `await new Promise(r => setTimeout(r, 1500)); "ok"`,
+            ].join('\n');
+            const res = (await this.browserRun(clickCode, 20000)) as {
               content?: Array<{ type?: string; text?: string }>;
               isError?: boolean;
             };
@@ -306,15 +337,33 @@ export class Engine {
           // OCU 风格：click / type / fill 由 element_index（observe id，number）→ tab.id(id) 元素 handle → CDP
           // 注意：`await tab.id(n).click()` 会被解析为 await (tab.id(n).click())（在 Promise 上取 click，undefined），
           // 必须 `await (await tab.id(n)).click()` 先取到 handle。
+          // 点击/输入前先把虚拟光标移到元素中心（boundingBox → 自动形态移动 + 真实 mouse.move hover）。
           elementAction: async (op, id, text) => {
             const n = Number(id);
+            if (op === 'click' || op === 'type') {
+              // 探测元素中心（boundingBox），失败则跳过光标直接操作
+              const boxCode = `const h = await tab.id(${n}); const box = await h.boundingBox(); JSON.stringify(box)`;
+              const boxRes = (await this.browserRun(boxCode, 10000)) as {
+                content?: Array<{ type?: string; text?: string }>;
+                isError?: boolean;
+              };
+              const boxText = boxRes?.isError ? '' : extractPartialText(boxRes);
+              try {
+                const box = JSON.parse(boxText) as { x: number; y: number; width: number; height: number };
+                if (box && typeof box.x === 'number') {
+                  await this.browserCursorMove(box.x + box.width / 2 - 4, box.y + box.height / 2 - 4);
+                }
+              } catch {
+                // boundingBox 不可用（元素 detached 等）——跳过光标，直接执行操作
+              }
+            }
             const code =
               op === 'click'
                 ? `await (await tab.id(${n})).click(); "ok"`
                 : op === 'type'
                   ? `const h = await tab.id(${n}); await h.click(); await h.type(${JSON.stringify(text ?? '')}); "ok"`
                   : `await (await tab.id(${n})).fill(${JSON.stringify(text ?? '')}); "ok"`;
-            const res = (await this.coding.call('browser', { action: 'run', name: 'main', code }, 15000)) as {
+            const res = (await this.browserRun(code, 15000)) as {
               content?: Array<{ type?: string; text?: string }>;
               isError?: boolean;
             };
@@ -458,17 +507,20 @@ export class Engine {
    */
   async browserPreview(): Promise<BrowserPreviewFrame | null> {
     try {
+      // 页面跳转后 overlay 已随 DOM 销毁——截图前按最后位置/形态重新注入虚拟光标
+      const restore = this.browserCursorRestoreCode();
       const res = (await this.coding.call(
         'browser',
         {
           action: 'run',
           name: 'main',
           code: [
+            restore,
             `const dest = "/tmp/infuture-browser-preview-" + Date.now() + ".png";`,
             `const s = await tab.screenshot({ silent: true, save: dest });`,
             `const info = await tab.evaluate(() => ({ url: location.href, title: document.title, w: innerWidth, h: innerHeight }));`,
             `({ dest: s.dest, url: info.url, title: info.title, w: info.w, h: info.h })`,
-          ].join('\n'),
+          ].filter(Boolean).join('\n'),
         },
         15000,
       )) as { content?: Array<{ type?: string; text?: string }>; isError?: boolean };
@@ -492,9 +544,117 @@ export class Engine {
     }
   }
 
+  /** 虚拟光标 SVG（CDP 的 page.mouse 输入不渲染系统光标，浮窗 overlay 用；多种形态）。 */
+  private static readonly CURSOR_SVGS: Record<string, string> = {
+    arrow:
+      '<svg width="20" height="26" viewBox="0 0 20 26"><path d="M2 1 L2 20 L7 15 L11 24 L14.5 22.5 L10.5 14 L18 14 Z" fill="#111" stroke="#fff" stroke-width="1.4"/></svg>',
+    pointer:
+      '<svg width="20" height="26" viewBox="0 0 20 26"><path d="M9 2.5 C9 1.8 10 1.8 10 2.5 L10.5 9 L11.3 9 L11.3 6.8 C11.3 6 12.3 6 12.3 6.8 L12.3 9 L13.2 9 L13.2 7.6 C13.2 6.8 14.2 6.8 14.2 7.6 L14.2 9.4 L15 9.4 L15 8.8 C15 8 16 8 16 8.8 L16 13.5 C16 17.5 13.6 20 10.6 20 L9.8 20 C7 20 5.6 18.2 4.6 16.2 L3 12.8 C2.6 11.9 3.9 11.2 4.5 12 L6.2 14.2 L6.2 4.3 C6.2 3.5 7.2 3.5 7.2 4.3 L7.2 10 L8 10 Z" fill="#111" stroke="#fff" stroke-width="1.2"/></svg>',
+    text:
+      '<svg width="20" height="26" viewBox="0 0 20 26"><path d="M6 1 L6 2.2 C8 2.6 8.6 3.6 8.6 6 L8.6 9.4 C8.6 10.8 9.4 11.5 10.6 11.8 L10.6 12.2 C9.4 12.5 8.6 13.2 8.6 14.6 L8.6 18 C8.6 20.4 8 21.4 6 21.8 L6 23 L14 23 L14 21.8 C12 21.4 11.4 20.4 11.4 18 L11.4 14.6 C11.4 13.2 10.6 12.5 9.4 12.2 L9.4 11.8 C10.6 11.5 11.4 10.8 11.4 9.4 L11.4 6 C11.4 3.6 12 2.6 14 2.2 L14 1 Z" fill="#111" stroke="#fff" stroke-width="0.8"/></svg>',
+  };
+
+  /** 虚拟光标最后已知位置与形态：页面跳转会销毁 overlay，浮窗截图前按此重新注入。 */
+  private browserCursorState: { x: number; y: number; shape: string } | null = null;
+
+  /**
+   * browser run 统一入口：Tab busy（上一段 run 脚本尚未结束）时自动退避重试，
+   * 而不是把 "Tab is busy" 错误抛给模型/用户（pi 的 browser API 未暴露运行取消，
+   * busy 必然是短暂状态——在飞脚本几秒内会结束或超时）。
+   */
+  private async browserRun(code: string, timeoutMs = 15000, maxRetries = 8): Promise<unknown> {
+    let lastErr: unknown;
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        return await this.coding.call('browser', { action: 'run', name: 'main', code }, timeoutMs);
+      } catch (err) {
+        lastErr = err;
+        if (!/is busy/i.test(err instanceof Error ? err.message : String(err))) throw err;
+        await new Promise((r) => setTimeout(r, 600));
+      }
+    }
+    throw lastErr;
+  }
+
+  /**
+   * 注入/移动内嵌页面上的虚拟光标：0.4s 缓动移动到目标点，并同步真实指针产生 hover。
+   * x/y 为空时移到视口中心；shape 缺省时按目标点下的元素自动选择形态
+   * （链接/按钮 → 手型 pointer，输入框 → I 型 text，其余 → 箭头 arrow）。
+   * 返回 false 表示页面不可用。
+   */
+  async browserCursorMove(x?: number | null, y?: number | null, shape?: string | null): Promise<boolean> {
+    try {
+      const code = [
+        `const svgs = ${JSON.stringify(Engine.CURSOR_SVGS)};`,
+        `const pos = await tab.evaluate((x, y, shape, svgs) => {`,
+        `  let c = document.getElementById('__infu_cursor__');`,
+        `  if (!c) {`,
+        `    c = document.createElement('div'); c.id = '__infu_cursor__';`,
+        `    c.style.cssText = 'position:fixed;left:0;top:0;z-index:2147483647;pointer-events:none;transition:transform .4s cubic-bezier(.25,.8,.35,1);will-change:transform;';`,
+        `    document.documentElement.appendChild(c);`,
+        `  }`,
+        `  const px = (x == null) ? innerWidth / 2 - 4 : x, py = (y == null) ? innerHeight / 2 - 4 : y;`,
+        `  let s = shape;`,
+        `  if (!s) {`,
+        `    const el = document.elementFromPoint(px, py);`,
+        `    const cs = el ? getComputedStyle(el).cursor : 'auto';`,
+        `    const tag = el ? el.tagName.toUpperCase() : '';`,
+        `    s = (cs === 'pointer' || tag === 'A' || tag === 'BUTTON') ? 'pointer'`,
+        `      : (cs === 'text' || tag === 'INPUT' || tag === 'TEXTAREA') ? 'text' : 'arrow';`,
+        `  }`,
+        `  c.innerHTML = svgs[s] || svgs.arrow;`,
+        `  c.style.transform = 'translate(' + px + 'px,' + py + 'px)';`,
+        `  return { px, py, shape: s };`,
+        `}, ${x ?? 'null'}, ${y ?? 'null'}, ${shape ? JSON.stringify(shape) : 'null'}, svgs);`,
+        `await page.mouse.move(pos.px, pos.py, { steps: 10 });`,
+        `await new Promise(r => setTimeout(r, 450));`,
+        `JSON.stringify(pos)`,
+      ].join('\n');
+      const res = (await this.browserRun(code, 10000)) as {
+        content?: Array<{ type?: string; text?: string }>;
+        isError?: boolean;
+      };
+      if (res?.isError) return false;
+      const text = extractPartialText(res);
+      try {
+        const pos = JSON.parse(text) as { px: number; py: number; shape: string };
+        this.browserCursorState = { x: pos.px, y: pos.py, shape: pos.shape };
+      } catch {
+        // 状态记录失败不影响本次输入
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * 浮窗截图前恢复虚拟光标：页面跳转后 overlay 随 DOM 销毁，
+   * 按 browserCursorState（最后位置/形态）在新页面上重新注入（无动画，静默失败）。
+   */
+  private browserCursorRestoreCode(): string {
+    const st = this.browserCursorState;
+    if (!st) return '';
+    return [
+      `try { await tab.evaluate((x, y, s, svgs) => {`,
+      `  let c = document.getElementById('__infu_cursor__'); if (c) return;`,
+      `  c = document.createElement('div'); c.id = '__infu_cursor__';`,
+      `  c.style.cssText = 'position:fixed;left:0;top:0;z-index:2147483647;pointer-events:none;';`,
+      `  c.innerHTML = svgs[s] || svgs.arrow;`,
+      `  document.documentElement.appendChild(c);`,
+      `  c.style.transform = 'translate(' + x + 'px,' + y + 'px)';`,
+      `}, ${st.x}, ${st.y}, ${JSON.stringify(st.shape)}, ${JSON.stringify(Engine.CURSOR_SVGS)}); } catch (e) {}`,
+    ].join('\n');
+  }
+
   /** browser 浮窗交互转发：浮窗里的点击/滚动/键盘 → CDP 输入（作用于同一页面实例）。 */
   async browserPreviewInput(input: BrowserPreviewInput): Promise<{ ok: boolean; error?: string }> {
-    const { type, x, y, text, dx, dy, x2, y2 } = input ?? {};
+    const { type, x, y, text, dx, dy, x2, y2, via } = input ?? {};
+    // computer_use 来源：先让虚拟光标可见地移动过去（点击→目标点；滚动/输入→视口中心），
+    // 0.45s 动画后浮窗帧已包含光标落点，再执行真实 CDP 输入
+    if (via === 'computer_use' && (type === 'click' || type === 'scroll' || type === 'type' || type === 'key')) {
+      await this.browserCursorMove(type === 'click' ? x : undefined, type === 'click' ? y : undefined);
+    }
     let code: string;
     switch (type) {
       case 'click':
@@ -527,7 +687,7 @@ export class Engine {
         return { ok: false, error: `unknown input type: ${type}` };
     }
     try {
-      const res = (await this.coding.call('browser', { action: 'run', name: 'main', code }, 15000)) as {
+      const res = (await this.browserRun(code, 15000)) as {
         content?: Array<{ type?: string; text?: string }>;
         isError?: boolean;
       };
